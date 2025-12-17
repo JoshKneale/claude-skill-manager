@@ -13,7 +13,7 @@ $TruncateLines = if ($env:SKILL_MANAGER_TRUNCATE_LINES) { [int]$env:SKILL_MANAGE
 $StateDir = Join-Path $env:USERPROFILE ".claude\skill-manager"
 $StateFile = Join-Path $StateDir "analyzed.json"
 $LogFile = Join-Path $StateDir "skill-manager-$(Get-Date -Format 'yyyy-MM-dd').log"
-$LockFile = Join-Path $StateDir "skill-manager.lock"
+$LockDir = Join-Path $StateDir "skill-manager.lock.d"
 $ProjectsDir = Join-Path $env:USERPROFILE ".claude\projects"
 
 # Ensure directories exist
@@ -33,30 +33,6 @@ function Write-Log {
     "[$timestamp] $Message" | Add-Content -Path $LogFile -Encoding UTF8
 }
 
-# Check if another instance is running
-function Test-IsRunning {
-    if (Test-Path $LockFile) {
-        try {
-            $pid = Get-Content $LockFile -ErrorAction Stop
-            if ($pid -and (Get-Process -Id $pid -ErrorAction SilentlyContinue)) {
-                return $true
-            }
-        } catch {}
-        # Stale lock file, remove it
-        Remove-Item $LockFile -Force -ErrorAction SilentlyContinue
-    }
-    return $false
-}
-
-# Acquire lock
-function Set-Lock {
-    $PID | Out-File -FilePath $LockFile -Encoding UTF8 -NoNewline
-}
-
-# Release lock
-function Remove-Lock {
-    Remove-Item $LockFile -Force -ErrorAction SilentlyContinue
-}
 
 # Preprocess transcript to reduce token usage
 # Removes metadata bloat, filters unneeded message types, truncates large tool results
@@ -198,16 +174,22 @@ if ($unanalyzed.Count -eq 0) {
 
 Write-Log "Found $($unanalyzed.Count) unanalyzed transcript(s) to process"
 
-# Check if another instance is already running
-if (Test-IsRunning) {
-    $existingPid = Get-Content $LockFile -ErrorAction SilentlyContinue
-    Write-Log "Another skill-manager instance is already running (PID: $existingPid). Skipping."
+# Acquire lock atomically using directory creation
+# New-Item for directories fails if it already exists (atomic check-and-create)
+try {
+    New-Item -ItemType Directory -Path $LockDir -ErrorAction Stop | Out-Null
+    # Write PID for debugging/monitoring
+    $PID | Out-File -FilePath (Join-Path $LockDir "pid") -Encoding UTF8 -NoNewline
+} catch {
+    Write-Log "Another skill-manager instance is already running. Skipping."
     exit 0
 }
 
+Write-Log "Lock acquired, starting background processing..."
+
 # Process in background job so session exits immediately
 $jobScript = {
-    param($StateDir, $StateFile, $LockFile, $LogFile, $UnanalyzedList, $Debug, $TruncateLines)
+    param($StateDir, $StateFile, $LockDir, $LogFile, $UnanalyzedList, $Debug, $TruncateLines)
 
     $ErrorActionPreference = "Stop"
 
@@ -290,8 +272,8 @@ $jobScript = {
         return $outputFile
     }
 
-    # Acquire lock
-    $PID | Out-File -FilePath $LockFile -Encoding UTF8 -NoNewline
+    # Lock is already acquired by parent process (directory exists)
+    # We just need to ensure we clean it up when done
 
     try {
         foreach ($transcript in $UnanalyzedList) {
@@ -375,13 +357,13 @@ $jobScript = {
 
         Write-Log "=== Processing complete ==="
     } finally {
-        # Release lock
-        Remove-Item $LockFile -Force -ErrorAction SilentlyContinue
+        # Release lock (remove directory)
+        Remove-Item $LockDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
 $debugMode = if ($env:SKILL_MANAGER_DEBUG) { $env:SKILL_MANAGER_DEBUG } else { "0" }
 
-Start-Job -ScriptBlock $jobScript -ArgumentList $StateDir, $StateFile, $LockFile, $LogFile, $unanalyzed, $debugMode, $TruncateLines | Out-Null
+Start-Job -ScriptBlock $jobScript -ArgumentList $StateDir, $StateFile, $LockDir, $LogFile, $unanalyzed, $debugMode, $TruncateLines | Out-Null
 
 Write-Log "Background processing started for $($unanalyzed.Count) transcript(s)"

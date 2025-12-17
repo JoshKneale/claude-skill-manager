@@ -13,7 +13,6 @@ TRUNCATE_LINES="${SKILL_MANAGER_TRUNCATE_LINES:-30}"
 STATE_DIR="${HOME}/.claude/skill-manager"
 STATE_FILE="${STATE_DIR}/analyzed.json"
 LOG_FILE="${STATE_DIR}/skill-manager-$(date +%Y-%m-%d).log"
-LOCK_FILE="${STATE_DIR}/skill-manager.lock"
 PROJECTS_DIR="${HOME}/.claude/projects"
 
 # OS Detection for cross-platform compatibility
@@ -40,29 +39,6 @@ log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
 }
 
-# Check if another instance is running
-is_running() {
-  if [ -f "$LOCK_FILE" ]; then
-    local pid
-    pid=$(cat "$LOCK_FILE" 2>/dev/null)
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      return 0  # Process is running
-    fi
-    # Stale lock file, remove it
-    rm -f "$LOCK_FILE"
-  fi
-  return 1  # Not running
-}
-
-# Acquire lock (call from background process)
-acquire_lock() {
-  echo $$ > "$LOCK_FILE"
-}
-
-# Release lock
-release_lock() {
-  rm -f "$LOCK_FILE"
-}
 
 # Check if jq is installed
 if ! command -v jq &> /dev/null; then
@@ -209,16 +185,24 @@ fi
 
 log "Found ${#unanalyzed[@]} unanalyzed transcript(s) to process"
 
-# Check if another instance is already running
-if is_running; then
-  log "Another skill-manager instance is already running (PID: $(cat "$LOCK_FILE")). Skipping."
+# Acquire lock atomically using mkdir (portable across macOS/Linux)
+# mkdir is atomic - it fails if directory already exists
+LOCK_DIR="${STATE_DIR}/skill-manager.lock.d"
+
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  log "Another skill-manager instance is already running. Skipping."
   exit 0
 fi
 
+# Write PID for debugging/monitoring
+echo $$ > "${LOCK_DIR}/pid"
+
+log "Lock acquired, starting background processing..."
+
 # Process in background so session exits immediately
 (
-  acquire_lock
-  trap 'release_lock' EXIT
+  # Release lock (remove directory) on exit
+  trap 'rm -rf "$LOCK_DIR" 2>/dev/null' EXIT
   for transcript in "${unanalyzed[@]}"; do
     log "Processing: $transcript"
 
