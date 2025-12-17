@@ -12,7 +12,7 @@ import { spawn } from 'node:child_process';
 
 /**
  * Load configuration from environment variables with defaults
- * @returns {{ TRANSCRIPT_COUNT: number, LOOKBACK_DAYS: number, TRUNCATE_LINES: number, MIN_TRANSCRIPT_LINES: number }}
+ * @returns {{ TRANSCRIPT_COUNT: number, LOOKBACK_DAYS: number, TRUNCATE_LINES: number, MIN_TRANSCRIPT_LINES: number, SKIP_SUBAGENTS: boolean }}
  */
 export function loadConfig() {
   return {
@@ -20,6 +20,7 @@ export function loadConfig() {
     LOOKBACK_DAYS: parseInt(process.env.SKILL_MANAGER_LOOKBACK_DAYS, 10) || 7,
     TRUNCATE_LINES: parseInt(process.env.SKILL_MANAGER_TRUNCATE_LINES, 10) || 30,
     MIN_TRANSCRIPT_LINES: parseInt(process.env.SKILL_MANAGER_MIN_LINES, 10) || 10,
+    SKIP_SUBAGENTS: process.env.SKILL_MANAGER_SKIP_SUBAGENTS !== '0', // default: true
   };
 }
 
@@ -419,17 +420,28 @@ export function isMinimalTranscript(transcriptPath, minLines = 10) {
 }
 
 /**
+ * Check if a transcript is a sub-agent session (spawned by Task tool)
+ * Sub-agents have filenames starting with "agent-"
+ * @param {string} transcriptPath - Path to the transcript file
+ * @returns {boolean} - true if this is a sub-agent session, false otherwise
+ */
+export function isSubagentSession(transcriptPath) {
+  const filename = path.basename(transcriptPath);
+  return filename.startsWith('agent-');
+}
+
+/**
  * Filter transcripts to only those not already in state file
- * Also skips skill-manager's own sessions and minimal transcripts
+ * Also skips skill-manager's own sessions, minimal transcripts, and optionally sub-agents
  * Equivalent to: checking if jq -e --arg path "$transcript" '.transcripts[$path]' returns false
  * @param {string[]} transcripts - Array of transcript paths to filter
  * @param {{ version: number, transcripts: Object }} state - State object with transcripts map
  * @param {number} limit - Maximum number of unanalyzed transcripts to return
- * @param {{ minLines?: number }} [options] - Filter options
+ * @param {{ minLines?: number, skipSubagents?: boolean }} [options] - Filter options
  * @returns {string[]} - Array of unanalyzed transcript paths, limited to `limit`
  */
 export function filterUnanalyzed(transcripts, state, limit, options = {}) {
-  const { minLines = 10 } = options;
+  const { minLines = 10, skipSubagents = true } = options;
   const result = [];
 
   for (const transcript of transcripts) {
@@ -437,6 +449,10 @@ export function filterUnanalyzed(transcripts, state, limit, options = {}) {
     if (!(transcript in state.transcripts)) {
       // Skip skill-manager's own sessions
       if (isSkillManagerSession(transcript)) {
+        continue;
+      }
+      // Skip sub-agent sessions if configured
+      if (skipSubagents && isSubagentSession(transcript)) {
         continue;
       }
       // Skip transcripts that are too short
@@ -887,6 +903,7 @@ export async function main({ stateDir, projectsDir, log, runAnalysis, config, st
   const state = readStateFile(stateFile);
   const unanalyzed = filterUnanalyzed(transcripts, state, config.TRANSCRIPT_COUNT, {
     minLines: config.MIN_TRANSCRIPT_LINES,
+    skipSubagents: config.SKIP_SUBAGENTS,
   });
 
   if (unanalyzed.length === 0) {

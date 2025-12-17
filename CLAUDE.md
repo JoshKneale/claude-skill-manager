@@ -54,6 +54,7 @@ Environment variables to customize behavior:
 | `SKILL_MANAGER_DEBUG` | `0` | Set to `1` to capture full Claude output in logs |
 | `SKILL_MANAGER_TRUNCATE_LINES` | `30` | Lines to keep at start/end of large tool results (reduces tokens) |
 | `SKILL_MANAGER_MIN_LINES` | `10` | Skip transcripts with fewer than N lines (filters warmup sessions) |
+| `SKILL_MANAGER_SKIP_SUBAGENTS` | `1` | Skip sub-agent sessions (Task tool spawned). Set to `0` to include them |
 
 ## Testing Changes
 
