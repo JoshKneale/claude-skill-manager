@@ -8,6 +8,50 @@ A Claude Code plugin that automatically extracts reusable skills from your conve
 
 > **Note**: This project is in early alpha. The core functionality works, but expect rough edges and breaking changes.
 
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [How It Works](#how-it-works)
+- [What Gets Extracted](#what-gets-extracted)
+- [Why Failures Matter Most](#why-failures-matter-most)
+- [Example Output](#example-output)
+- [How Skills Improve Over Time](#how-skills-improve-over-time)
+- [Skill Discovery](#skill-discovery)
+- [Skill Quality](#skill-quality)
+- [Configuration](#configuration)
+- [Requirements & Platform Support](#requirements--platform-support)
+- [Manual Usage](#manual-usage)
+- [Uninstalling](#uninstalling)
+- [Development](#development)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+- [Issues & Support](#issues--support)
+
+## Quick Start
+
+### From GitHub
+
+```bash
+# Add this repo as a marketplace
+/plugin marketplace add joshkneale/claude-skill-manager
+
+# Install the plugin
+/plugin install skill-manager@skill-manager-marketplace
+```
+
+### Local Development
+
+```bash
+# Clone the repository
+git clone https://github.com/joshkneale/claude-skill-manager.git
+
+# Add local directory as marketplace
+/plugin marketplace add ./path/to/claude-skill-manager
+
+# Install the plugin
+/plugin install skill-manager@skill-manager-marketplace
+```
+
 ## How It Works
 
 1. **SessionEnd Hook**: When you end a Claude Code session, the plugin triggers
@@ -51,104 +95,6 @@ Each skill includes a **Failed Attempts table**:
 | ------------------------ | ---------------------------- | --------------------- |
 | Running without `--flag` | 404 error on `/api/endpoint` | `--flag` is mandatory |
 
-## Installation
-
-### From GitHub
-
-```bash
-# Add this repo as a marketplace
-/plugin marketplace add joshkneale/claude-skill-manager
-
-# Install the plugin
-/plugin install skill-manager@skill-manager-marketplace
-```
-
-### Local Development
-
-```bash
-# Clone the repository
-git clone https://github.com/joshkneale/claude-skill-manager.git
-
-# Add local directory as marketplace
-/plugin marketplace add ./path/to/claude-skill-manager
-
-# Install the plugin
-/plugin install skill-manager@skill-manager-marketplace
-```
-
-## Uninstalling
-
-### Remove the Plugin
-
-```bash
-/plugin uninstall skill-manager@skill-manager-marketplace
-```
-
-This removes the plugin and its hooks. Your extracted skills in `.claude/skills/` are **not** deleted.
-
-### Optional: Clean Up State Files
-
-The plugin stores state (list of analyzed transcripts) and logs at:
-
-**macOS/Linux:**
-```bash
-rm -rf ~/.claude/skill-manager
-```
-
-**Windows:**
-```powershell
-Remove-Item -Recurse -Force "$env:USERPROFILE\.claude\skill-manager"
-```
-
-### What Gets Removed
-
-| Item | Location | Removed by uninstall? |
-|------|----------|----------------------|
-| Plugin files | `~/.claude/plugins/installed/skill-manager@...` | Yes |
-| State file | `~/.claude/skill-manager/analyzed.json` | No (manual cleanup) |
-| Log files | `~/.claude/skill-manager/skill-manager-*.log` | No (manual cleanup) |
-| Extracted skills | `.claude/skills/` (in your projects) | No (your data) |
-
-## Manual Usage
-
-Run skill extraction manually on any transcript:
-
-```
-/skill-manager /path/to/transcript.jsonl
-```
-
-## Skill Discovery
-
-Skills are written with specific, discoverable descriptions:
-
-**Bad** (too vague):
-```yaml
-description: Helps with API errors
-```
-
-**Good** (discoverable):
-```yaml
-description: |
-  Resolve OpenAI API rate limit errors in Python.
-  Use when: encountering 429 errors, "RateLimitError" in logs.
-  Example triggers: "getting rate limited", "API quota exceeded".
-```
-
-## How Skills Improve Over Time
-
-1. **First session**: Creates skill with initial example and any failures encountered
-2. **Later sessions**: Adds new examples, failure cases, and troubleshooting entries
-3. **Version tracking**: Each update bumps the version and notes what was added
-4. **Team collaboration**: Skills in `.claude/skills/` can be committed to git
-
-Example version history in a skill:
-```markdown
-## Version History
-- v1.2.0 (2025-12-20): Added edge case for timeout errors from session xyz789
-- v1.1.0 (2025-12-18): New failure case: missing env var, from session def456
-- v1.0.0 (2025-12-16): Initial extraction from session abc123
-```
-
 ## Example Output
 
 After a session where you debugged rate limit errors, the plugin might create:
@@ -191,6 +137,38 @@ description: |
 **Solution:** Implement exponential backoff with `tenacity` library
 ```
 
+## How Skills Improve Over Time
+
+1. **First session**: Creates skill with initial example and any failures encountered
+2. **Later sessions**: Adds new examples, failure cases, and troubleshooting entries
+3. **Version tracking**: Each update bumps the version and notes what was added
+4. **Team collaboration**: Skills in `.claude/skills/` can be committed to git
+
+Example version history in a skill:
+```markdown
+## Version History
+- v1.2.0 (2025-12-20): Added edge case for timeout errors from session xyz789
+- v1.1.0 (2025-12-18): New failure case: missing env var, from session def456
+- v1.0.0 (2025-12-16): Initial extraction from session abc123
+```
+
+## Skill Discovery
+
+Skills are written with specific, discoverable descriptions:
+
+**Bad** (too vague):
+```yaml
+description: Helps with API errors
+```
+
+**Good** (discoverable):
+```yaml
+description: |
+  Resolve OpenAI API rate limit errors in Python.
+  Use when: encountering 429 errors, "RateLimitError" in logs.
+  Example triggers: "getting rate limited", "API quota exceeded".
+```
+
 ## Skill Quality
 
 The plugin only extracts skills rated "medium" or higher:
@@ -227,27 +205,20 @@ Skills are written to `.claude/skills/` (project-level). This means:
 - **Log retention**: Log files older than 7 days are automatically deleted
 - **Concurrency**: Only one skill extraction runs at a time (lock file prevents overlap)
 
-## Requirements
+## Requirements & Platform Support
 
-- Claude Code CLI
-
-**Platform-specific:**
-- **macOS/Linux**: Requires `jq` for JSON parsing
-- **Windows**: No additional dependencies (uses native PowerShell JSON parsing)
-
-## Platform Support
+**Core requirement:** Claude Code CLI
 
 | Platform | Status | Notes |
 |----------|--------|-------|
-| macOS | Supported | Works out of the box |
-| Linux | Supported | Works out of the box |
-| Windows | Supported | Requires one-time setup (see below) |
+| macOS | Supported | Requires `jq` |
+| Linux | Supported | Requires `jq` |
+| Windows | Supported | One-time setup required |
 
 ### macOS / Linux
 
-No additional setup required. The plugin uses `trigger.sh` which works on both platforms.
+Install `jq` for JSON parsing:
 
-**Install jq:**
 ```bash
 # macOS
 brew install jq
@@ -284,6 +255,47 @@ Windows uses a PowerShell script (`trigger.ps1`) instead of bash. You need to up
    ```
 
 **Note:** Windows uses native PowerShell JSON parsing (`ConvertFrom-Json`), so `jq` is not required.
+
+## Manual Usage
+
+Run skill extraction manually on any transcript:
+
+```
+/skill-manager /path/to/transcript.jsonl
+```
+
+## Uninstalling
+
+### Remove the Plugin
+
+```bash
+/plugin uninstall skill-manager@skill-manager-marketplace
+```
+
+This removes the plugin and its hooks. Your extracted skills in `.claude/skills/` are **not** deleted.
+
+### Optional: Clean Up State Files
+
+The plugin stores state (list of analyzed transcripts) and logs at:
+
+**macOS/Linux:**
+```bash
+rm -rf ~/.claude/skill-manager
+```
+
+**Windows:**
+```powershell
+Remove-Item -Recurse -Force "$env:USERPROFILE\.claude\skill-manager"
+```
+
+### What Gets Removed
+
+| Item | Location | Removed by uninstall? |
+|------|----------|----------------------|
+| Plugin files | `~/.claude/plugins/installed/skill-manager@...` | Yes |
+| State file | `~/.claude/skill-manager/analyzed.json` | No (manual cleanup) |
+| Log files | `~/.claude/skill-manager/skill-manager-*.log` | No (manual cleanup) |
+| Extracted skills | `.claude/skills/` (in your projects) | No (your data) |
 
 ## Development
 
