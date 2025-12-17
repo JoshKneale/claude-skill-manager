@@ -1,4 +1,0 @@
-{"type":"user","message":{"role":"user","content":"What files are in the current directory?"}}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tool_01","name":"Bash","input":{"command":"ls -la"}}]}}
-{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool_01","content":"total 8\ndrwxr-xr-x  3 user  staff   96 Dec 17 10:00 .\ndrwxr-xr-x  5 user  staff  160 Dec 17 09:00 ..\n-rw-r--r--  1 user  staff  123 Dec 17 10:00 README.md"}]}}
-{"type":"assistant","message":{"role":"assistant","content":"The current directory contains a README.md file."}}
