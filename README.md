@@ -207,13 +207,15 @@ Skills are written to `.claude/skills/` (project-level). This means:
 
 ## Requirements & Platform Support
 
-**Core requirement:** Claude Code CLI
+**Core requirements:**
+- Claude Code CLI
+- Node.js (for cross-platform hook execution)
 
-| Platform | Status | Notes |
-|----------|--------|-------|
-| macOS | Supported | Requires `jq` |
-| Linux | Supported | Requires `jq` |
-| Windows | Supported | One-time setup required |
+| Platform | Status | Additional Requirements |
+|----------|--------|------------------------|
+| macOS | Supported | `jq` |
+| Linux | Supported | `jq` |
+| Windows | Supported | None (uses native PowerShell) |
 
 ### macOS / Linux
 
@@ -230,31 +232,9 @@ sudo apt install jq
 sudo yum install jq
 ```
 
-### Windows Setup
+### Windows
 
-Windows uses a PowerShell script (`trigger.ps1`) instead of bash. You need to update the hooks configuration:
-
-1. Find the plugin's hooks file (after installation):
-   ```
-   %USERPROFILE%\.claude\plugins\installed\skill-manager@skill-manager-marketplace\hooks\hooks.json
-   ```
-
-2. Edit `hooks.json` and change `trigger.sh` to `trigger.ps1`:
-   ```json
-   {
-     "hooks": {
-       "SessionEnd": [{
-         "hooks": [{
-           "type": "command",
-           "command": "powershell.exe -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/scripts/trigger.ps1\"",
-           "timeout": 180
-         }]
-       }]
-     }
-   }
-   ```
-
-**Note:** Windows uses native PowerShell JSON parsing (`ConvertFrom-Json`), so `jq` is not required.
+No additional setup required. The plugin automatically uses PowerShell on Windows.
 
 ## Manual Usage
 
@@ -328,11 +308,12 @@ See [Manual Usage](#manual-usage) for running skill extraction on specific trans
 1. Check the log file: `tail ~/.claude/skill-manager/skill-manager-$(date +%Y-%m-%d).log`
 2. Check jq is installed: `jq --version`
 3. Check Claude CLI is in PATH: `which claude`
+4. Check Node.js is in PATH: `node --version`
 
 **Windows:**
 1. Check the log file: `Get-Content "$env:USERPROFILE\.claude\skill-manager\skill-manager-$(Get-Date -Format 'yyyy-MM-dd').log"`
 2. Check Claude CLI is in PATH: `Get-Command claude`
-3. Verify hooks.json points to `trigger.ps1` (see Windows Setup above)
+3. Check Node.js is in PATH: `node --version`
 
 ### No skills extracted from session
 

@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/trigger.sh",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/trigger.js",
             "timeout": 180
           }
         ]
