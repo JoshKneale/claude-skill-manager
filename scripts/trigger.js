@@ -12,13 +12,14 @@ import { spawn } from 'node:child_process';
 
 /**
  * Load configuration from environment variables with defaults
- * @returns {{ TRANSCRIPT_COUNT: number, LOOKBACK_DAYS: number, TRUNCATE_LINES: number }}
+ * @returns {{ TRANSCRIPT_COUNT: number, LOOKBACK_DAYS: number, TRUNCATE_LINES: number, MIN_TRANSCRIPT_LINES: number }}
  */
 export function loadConfig() {
   return {
     TRANSCRIPT_COUNT: parseInt(process.env.SKILL_MANAGER_COUNT, 10) || 1,
     LOOKBACK_DAYS: parseInt(process.env.SKILL_MANAGER_LOOKBACK_DAYS, 10) || 7,
     TRUNCATE_LINES: parseInt(process.env.SKILL_MANAGER_TRUNCATE_LINES, 10) || 30,
+    MIN_TRANSCRIPT_LINES: parseInt(process.env.SKILL_MANAGER_MIN_LINES, 10) || 10,
   };
 }
 
@@ -400,15 +401,35 @@ export function isSkillManagerSession(transcriptPath) {
 }
 
 /**
+ * Check if a transcript is too short to be worth analyzing
+ * Counts non-empty lines in the JSONL file
+ * @param {string} transcriptPath - Path to the transcript file
+ * @param {number} minLines - Minimum number of lines required (default: 10)
+ * @returns {boolean} - true if transcript is too short, false otherwise
+ */
+export function isMinimalTranscript(transcriptPath, minLines = 10) {
+  try {
+    const content = fs.readFileSync(transcriptPath, 'utf8');
+    const lineCount = content.split('\n').filter(line => line.trim()).length;
+    return lineCount < minLines;
+  } catch (err) {
+    // If we can't read the file, don't skip it (let later stages handle the error)
+    return false;
+  }
+}
+
+/**
  * Filter transcripts to only those not already in state file
- * Also skips skill-manager's own sessions to avoid analyzing ourselves
+ * Also skips skill-manager's own sessions and minimal transcripts
  * Equivalent to: checking if jq -e --arg path "$transcript" '.transcripts[$path]' returns false
  * @param {string[]} transcripts - Array of transcript paths to filter
  * @param {{ version: number, transcripts: Object }} state - State object with transcripts map
  * @param {number} limit - Maximum number of unanalyzed transcripts to return
+ * @param {{ minLines?: number }} [options] - Filter options
  * @returns {string[]} - Array of unanalyzed transcript paths, limited to `limit`
  */
-export function filterUnanalyzed(transcripts, state, limit) {
+export function filterUnanalyzed(transcripts, state, limit, options = {}) {
+  const { minLines = 10 } = options;
   const result = [];
 
   for (const transcript of transcripts) {
@@ -416,6 +437,10 @@ export function filterUnanalyzed(transcripts, state, limit) {
     if (!(transcript in state.transcripts)) {
       // Skip skill-manager's own sessions
       if (isSkillManagerSession(transcript)) {
+        continue;
+      }
+      // Skip transcripts that are too short
+      if (isMinimalTranscript(transcript, minLines)) {
         continue;
       }
       result.push(transcript);
@@ -860,7 +885,9 @@ export async function main({ stateDir, projectsDir, log, runAnalysis, config, st
 
   // 5. Read state and filter to unanalyzed transcripts
   const state = readStateFile(stateFile);
-  const unanalyzed = filterUnanalyzed(transcripts, state, config.TRANSCRIPT_COUNT);
+  const unanalyzed = filterUnanalyzed(transcripts, state, config.TRANSCRIPT_COUNT, {
+    minLines: config.MIN_TRANSCRIPT_LINES,
+  });
 
   if (unanalyzed.length === 0) {
     log('All transcripts already analyzed');
