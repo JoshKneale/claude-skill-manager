@@ -373,7 +373,35 @@ export function discoverTranscripts(projectsDir, lookbackDays) {
 // =============================================================================
 
 /**
+ * Check if a transcript is a skill-manager session (should be skipped)
+ * Reads first ~2KB and looks for skill-manager markers to avoid analyzing our own sessions
+ * @param {string} transcriptPath - Path to the transcript file
+ * @returns {boolean} - true if this is a skill-manager session, false otherwise
+ */
+export function isSkillManagerSession(transcriptPath) {
+  try {
+    const fd = fs.openSync(transcriptPath, 'r');
+    const buffer = Buffer.alloc(2048);
+    const bytesRead = fs.readSync(fd, buffer, 0, 2048, 0);
+    fs.closeSync(fd);
+
+    const head = buffer.toString('utf8', 0, bytesRead);
+
+    // Check for skill-manager specific markers
+    return (
+      head.includes('Extract skills from transcript at:') ||
+      head.includes('skill-manager.md') ||
+      head.includes('Skill Manager') && head.includes('analyzing a Claude Code conversation transcript')
+    );
+  } catch (err) {
+    // If we can't read the file, don't skip it (let later stages handle the error)
+    return false;
+  }
+}
+
+/**
  * Filter transcripts to only those not already in state file
+ * Also skips skill-manager's own sessions to avoid analyzing ourselves
  * Equivalent to: checking if jq -e --arg path "$transcript" '.transcripts[$path]' returns false
  * @param {string[]} transcripts - Array of transcript paths to filter
  * @param {{ version: number, transcripts: Object }} state - State object with transcripts map
@@ -386,6 +414,10 @@ export function filterUnanalyzed(transcripts, state, limit) {
   for (const transcript of transcripts) {
     // Check if transcript path exists as key in state.transcripts
     if (!(transcript in state.transcripts)) {
+      // Skip skill-manager's own sessions
+      if (isSkillManagerSession(transcript)) {
+        continue;
+      }
       result.push(transcript);
       // Stop once we have enough
       if (result.length >= limit) {
