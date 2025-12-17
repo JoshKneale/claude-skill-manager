@@ -1,0 +1,14 @@
+FROM mcr.microsoft.com/powershell:7.4-ubuntu-22.04
+
+# Copy test files
+WORKDIR /app
+COPY scripts/ scripts/
+COPY tests/ tests/
+
+# Install mock claude to system PATH (so background jobs can find it)
+# The mock writes to /tmp/claude-was-called which the test checks
+RUN echo '#!/bin/bash\necho "mock-claude called with args: $*" >> /tmp/claude-was-called\necho "timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> /tmp/claude-was-called\nexit 0' > /usr/local/bin/claude && \
+    chmod +x /usr/local/bin/claude
+
+# Run smoke test
+CMD ["pwsh", "-NoProfile", "-File", "./tests/smoke-test.ps1"]

@@ -1,0 +1,15 @@
+FROM debian:12
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    jq \
+    bash \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy test files
+WORKDIR /app
+COPY scripts/ scripts/
+COPY tests/ tests/
+
+# Run smoke test
+CMD ["./tests/smoke-test.sh"]

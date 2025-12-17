@@ -1,0 +1,13 @@
+{
+  "name": "skill-manager",
+  "version": "0.1.0",
+  "description": "Automatically extract and manage skills from conversations",
+  "author": {
+    "name": "Josh Kneale"
+  },
+  "repository": "https://github.com/joshkneale/claude-skill-manager",
+  "license": "MIT",
+  "keywords": ["skills", "learning", "automation"],
+  "commands": "./commands/",
+  "hooks": "./hooks/hooks.json"
+}

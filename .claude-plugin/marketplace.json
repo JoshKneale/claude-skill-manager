@@ -1,0 +1,13 @@
+{
+  "name": "skill-manager-marketplace",
+  "owner": {
+    "name": "Josh Kneale"
+  },
+  "plugins": [
+    {
+      "name": "skill-manager",
+      "source": "./",
+      "description": "Automatically extract and manage skills from conversations"
+    }
+  ]
+}
