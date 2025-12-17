@@ -20,7 +20,7 @@ hooks/
 └── hooks.json           # Registers SessionEnd hook
 
 scripts/
-└── trigger.sh           # Shell script that hooks invoke (parses JSON, launches claude)
+└── trigger.js           # Node.js script that hooks invoke (cross-platform, launches claude)
 
 templates/skill/         # Templates for generated skill files
 ├── SKILL.md
@@ -30,7 +30,7 @@ templates/skill/         # Templates for generated skill files
 
 ## How It Works
 
-1. **SessionEnd hook** triggers `scripts/trigger.sh`
+1. **SessionEnd hook** triggers `scripts/trigger.js`
 2. Script discovers recent transcripts from `~/.claude/projects/` (last 7 days)
 3. Checks state file (`~/.claude/skill-manager/analyzed.json`) to find unanalyzed transcripts
 4. Processes 1 unanalyzed transcript per session (configurable)
@@ -67,7 +67,7 @@ export SKILL_MANAGER_DEBUG=1
 tail -f ~/.claude/skill-manager/skill-manager-$(date +%Y-%m-%d).log
 
 # Check state file (analyzed transcripts)
-cat ~/.claude/skill-manager/analyzed.json | jq .
+cat ~/.claude/skill-manager/analyzed.json
 ```
 
 ## Local Development Install
@@ -80,7 +80,7 @@ cat ~/.claude/skill-manager/analyzed.json | jq .
 ## Key Files
 
 - **`commands/skill-manager.md`**: The prompt that drives skill extraction. Contains all the logic for identifying patterns, rating importance, and writing skill files.
-- **`scripts/trigger.sh`**: Hook handler. Must exit quickly (runs extraction in background with `& disown`).
+- **`scripts/trigger.js`**: Hook handler. Must exit quickly (spawns detached child process for background work).
 - **`templates/skill/`**: Reference templates. Skills must follow this structure with frontmatter, failed attempts table, version history.
 
 ## Skill Structure
@@ -92,5 +92,5 @@ Generated skills are directories with three files:
 
 ## Dependencies
 
-- `jq` for JSON parsing in trigger script
+- Node.js 18+ (handles JSON parsing and cross-platform execution)
 - Claude Code CLI (`claude` command in PATH)

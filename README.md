@@ -207,34 +207,17 @@ Skills are written to `.claude/skills/` (project-level). This means:
 
 ## Requirements & Platform Support
 
-**Core requirements:**
+**Requirements:**
 - Claude Code CLI
-- Node.js (for cross-platform hook execution)
+- Node.js 18+ (handles all cross-platform execution and JSON parsing)
 
-| Platform | Status | Additional Requirements |
-|----------|--------|------------------------|
-| macOS | Supported | `jq` |
-| Linux | Supported | `jq` |
-| Windows | Supported | None (uses native PowerShell) |
+| Platform | Status |
+|----------|--------|
+| macOS | Supported |
+| Linux | Supported |
+| Windows | Supported |
 
-### macOS / Linux
-
-Install `jq` for JSON parsing:
-
-```bash
-# macOS
-brew install jq
-
-# Ubuntu/Debian
-sudo apt install jq
-
-# Fedora/RHEL
-sudo yum install jq
-```
-
-### Windows
-
-No additional setup required. The plugin automatically uses PowerShell on Windows.
+No additional platform-specific dependencies required. The trigger script is written in pure Node.js for consistent cross-platform behavior.
 
 ## Manual Usage
 
@@ -281,21 +264,14 @@ Remove-Item -Recurse -Force "$env:USERPROFILE\.claude\skill-manager"
 
 ### Running Tests
 
-The project includes smoke tests to verify basic functionality:
+The project includes unit tests for the trigger script:
 
 ```bash
+# Install dependencies
+npm install
+
 # Run all tests
-./tests/run-smoke-tests.sh
-
-# Individual tests
-./tests/smoke-test.sh           # Basic trigger script test
-./tests/test-preprocessing.sh   # Transcript preprocessing test
-./tests/test-failure-handling.sh # Error handling test
-```
-
-Windows:
-```powershell
-.\tests\smoke-test.ps1
+npm test
 ```
 
 See [Manual Usage](#manual-usage) for running skill extraction on specific transcripts, and [Debug mode](#debug-mode) for verbose output.
@@ -306,14 +282,13 @@ See [Manual Usage](#manual-usage) for running skill extraction on specific trans
 
 **macOS/Linux:**
 1. Check the log file: `tail ~/.claude/skill-manager/skill-manager-$(date +%Y-%m-%d).log`
-2. Check jq is installed: `jq --version`
+2. Check Node.js is in PATH: `node --version` (requires 18+)
 3. Check Claude CLI is in PATH: `which claude`
-4. Check Node.js is in PATH: `node --version`
 
 **Windows:**
 1. Check the log file: `Get-Content "$env:USERPROFILE\.claude\skill-manager\skill-manager-$(Get-Date -Format 'yyyy-MM-dd').log"`
-2. Check Claude CLI is in PATH: `Get-Command claude`
-3. Check Node.js is in PATH: `node --version`
+2. Check Node.js is in PATH: `node --version` (requires 18+)
+3. Check Claude CLI is in PATH: `Get-Command claude`
 
 ### No skills extracted from session
 
