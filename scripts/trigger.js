@@ -16,10 +16,22 @@ import { spawn } from 'node:child_process';
  * @returns {{ TRUNCATE_LINES: number, MIN_LINES: number, SAVE_OUTPUT: boolean }}
  */
 export function loadConfig() {
+  // Parse TRUNCATE_LINES with validation (must be positive)
+  const truncateLines = parseInt(process.env.SKILL_MANAGER_TRUNCATE_LINES, 10);
+  const validTruncateLines = truncateLines > 0 ? truncateLines : 30;
+
+  // Parse MIN_LINES with validation (must be non-negative)
+  const minLines = parseInt(process.env.SKILL_MANAGER_MIN_LINES, 10);
+  const validMinLines = minLines >= 0 && !isNaN(minLines) ? minLines : 10;
+
+  // Parse SAVE_OUTPUT - accept '1', 'true', 'yes' (case-insensitive)
+  const saveOutputEnv = (process.env.SKILL_MANAGER_SAVE_OUTPUT || '').toLowerCase();
+  const saveOutput = saveOutputEnv === '1' || saveOutputEnv === 'true' || saveOutputEnv === 'yes';
+
   return {
-    TRUNCATE_LINES: parseInt(process.env.SKILL_MANAGER_TRUNCATE_LINES, 10) || 30,
-    MIN_LINES: parseInt(process.env.SKILL_MANAGER_MIN_LINES, 10) || 10,
-    SAVE_OUTPUT: process.env.SKILL_MANAGER_SAVE_OUTPUT === '1', // default: false
+    TRUNCATE_LINES: validTruncateLines,
+    MIN_LINES: validMinLines,
+    SAVE_OUTPUT: saveOutput,
   };
 }
 
@@ -28,11 +40,31 @@ export function loadConfig() {
 // =============================================================================
 
 /**
+ * Expand tilde (~) in file paths to the user's home directory
+ * @param {string} filePath - Path that may contain leading tilde
+ * @returns {string} - Path with tilde expanded
+ */
+export function expandTilde(filePath) {
+  if (!filePath || typeof filePath !== 'string') {
+    return filePath;
+  }
+  if (filePath.startsWith('~/') || filePath === '~') {
+    const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+    return filePath.replace(/^~/, homeDir);
+  }
+  return filePath;
+}
+
+/**
  * Build standard paths used by skill manager
  * @returns {{ STATE_DIR: string, LOG_FILE: string, OUTPUTS_DIR: string }}
+ * @throws {Error} If HOME or USERPROFILE environment variable is not set
  */
 export function buildPaths() {
   const homeDir = process.env.HOME || process.env.USERPROFILE;
+  if (!homeDir) {
+    throw new Error('Neither HOME nor USERPROFILE environment variable is set');
+  }
   const stateDir = `${homeDir}/.claude/skill-manager`;
   const today = new Date().toISOString().slice(0, 10);
 
@@ -226,9 +258,13 @@ export function countLines(filePath) {
 // Transcript Preprocessing
 // =============================================================================
 
+// Maximum characters for single-line or low-line content (50KB default)
+const MAX_CHARS_SINGLE_LINE = 50000;
+
 /**
  * Truncate text content if it exceeds the threshold
- * Keeps first N and last N lines, inserts truncation marker
+ * - For multi-line content: keeps first N and last N lines
+ * - For single-line/low-line content: truncates by character count if very long
  * @param {string} text - The text to potentially truncate
  * @param {number} truncateLines - Number of lines to keep at start and end
  * @returns {string} - Original or truncated text
@@ -237,16 +273,27 @@ function truncateText(text, truncateLines) {
   const lines = text.split('\n');
   const threshold = truncateLines * 2;
 
-  if (lines.length <= threshold) {
-    return text;
+  // Multi-line truncation
+  if (lines.length > threshold) {
+    const truncatedCount = lines.length - threshold;
+    const firstLines = lines.slice(0, truncateLines);
+    const lastLines = lines.slice(-truncateLines);
+    const marker = `... [truncated ${truncatedCount} lines] ...`;
+    return [...firstLines, '', marker, '', ...lastLines].join('\n');
   }
 
-  const truncatedCount = lines.length - threshold;
-  const firstLines = lines.slice(0, truncateLines);
-  const lastLines = lines.slice(-truncateLines);
-  const marker = `... [truncated ${truncatedCount} lines] ...`;
+  // Character-based truncation for single-line or low-line content that's very long
+  // This handles cases like minified JS, base64, or other long single-line content
+  if (text.length > MAX_CHARS_SINGLE_LINE) {
+    const keepChars = Math.floor(MAX_CHARS_SINGLE_LINE / 2);
+    const truncatedChars = text.length - MAX_CHARS_SINGLE_LINE;
+    const firstPart = text.slice(0, keepChars);
+    const lastPart = text.slice(-keepChars);
+    const marker = `\n... [truncated ${truncatedChars} characters] ...\n`;
+    return firstPart + marker + lastPart;
+  }
 
-  return [...firstLines, '', marker, '', ...lastLines].join('\n');
+  return text;
 }
 
 /**
@@ -368,11 +415,12 @@ export function preprocessTranscript(inputFilePath, options) {
     outputLines.push(JSON.stringify(processed));
   }
 
-  // Write to temp file
+  // Write to temp file (include random suffix for uniqueness in concurrent calls)
   const tmpDir = os.tmpdir();
+  const randomSuffix = Math.random().toString(36).substring(2, 10);
   const tmpFile = path.join(
     tmpDir,
-    `preprocessed-transcript-${Date.now()}-${process.pid}.jsonl`
+    `preprocessed-transcript-${Date.now()}-${process.pid}-${randomSuffix}.jsonl`
   );
   fs.writeFileSync(tmpFile, outputLines.join('\n'));
 
@@ -448,13 +496,18 @@ export async function runAnalysis(transcriptPath, options) {
     '--allowedTools', `Read,Write(${homeDir}/.claude/skills/**),Glob,Grep`,
   ];
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const child = spawner('claude', args, {
       stdio: saveOutput ? ['ignore', 'pipe', 'pipe'] : ['ignore', 'ignore', 'ignore'],
     });
 
     let outputFile;
     let outputChunks = [];
+
+    // Handle spawn errors (e.g., command not found)
+    child.on('error', (err) => {
+      reject(err);
+    });
 
     // When saving output, collect stdout/stderr
     if (saveOutput && child.stdout && child.stderr) {
@@ -494,9 +547,10 @@ export async function runAnalysis(transcriptPath, options) {
  * @param {function(...args): void} options.log - Logging function
  * @param {{ TRUNCATE_LINES: number, SAVE_OUTPUT: boolean }} options.config - Configuration
  * @param {string} options.outputsDir - Directory for output files
+ * @param {function} [options.spawner] - Optional spawn function for testing (passed to runAnalysis)
  * @returns {Promise<{ success: boolean, exitCode?: number }>}
  */
-export async function processTranscript({ transcriptPath, log, config, outputsDir }) {
+export async function processTranscript({ transcriptPath, log, config, outputsDir, spawner }) {
   log(`Processing: ${transcriptPath}`);
 
   // Preprocess transcript
@@ -519,6 +573,7 @@ export async function processTranscript({ transcriptPath, log, config, outputsDi
       saveOutput: config.SAVE_OUTPUT,
       outputsDir,
       originalTranscriptPath: transcriptPath,
+      spawner,
     });
   } finally {
     // Always clean up temp file
@@ -551,9 +606,13 @@ export async function processTranscript({ transcriptPath, log, config, outputsDi
  * @param {{ TRUNCATE_LINES: number, MIN_LINES: number, SAVE_OUTPUT: boolean }} options.config - Configuration
  * @param {string} options.stateDir - Path to state directory
  * @param {string} options.outputsDir - Directory for output files
+ * @param {function} [options.spawner] - Optional spawn function for testing (passed to processTranscript)
  * @returns {Promise<number>} - Exit code (0 for success)
  */
-export async function main({ transcriptPath, log, config, stateDir, outputsDir }) {
+export async function main({ transcriptPath: rawTranscriptPath, log, config, stateDir, outputsDir, spawner }) {
+  // Expand tilde in transcript path
+  const transcriptPath = expandTilde(rawTranscriptPath);
+
   // Ensure state directory exists
   fs.mkdirSync(stateDir, { recursive: true });
 
@@ -585,6 +644,7 @@ export async function main({ transcriptPath, log, config, stateDir, outputsDir }
     log,
     config,
     outputsDir,
+    spawner,
   });
 
   log('=== Processing complete ===');
@@ -673,6 +733,13 @@ if (isMainModule) {
         detached: true,
         stdio: 'ignore',
       });
+
+      // Handle spawn errors (e.g., if node executable not found)
+      child.on('error', (err) => {
+        logFn(`Error spawning worker: ${err.message}`);
+        process.exit(1);
+      });
+
       child.unref();
 
       logFn('Background processing started');

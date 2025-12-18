@@ -481,4 +481,111 @@ describe('preprocessTranscript', () => {
       );
     });
   });
+
+  describe('character-based truncation', () => {
+    it('should truncate very long single-line content by character count', () => {
+      // Create a single line of 100KB content (exceeds 50KB threshold)
+      const longLine = 'x'.repeat(100000);
+      const toolResult = {
+        type: 'tool_result',
+        content: longLine,
+      };
+
+      inputFile = createTempJsonl([
+        { type: 'assistant', message: { content: [toolResult] } },
+      ]);
+
+      outputFile = preprocessTranscript(inputFile, { truncateLines: 30 });
+      const result = readJsonl(outputFile);
+
+      const outputContent = result[0].message.content[0].content;
+
+      // Should be truncated and contain the marker
+      assert.ok(outputContent.length < longLine.length, 'content should be truncated');
+      assert.ok(outputContent.includes('truncated'), 'should contain truncation marker');
+      assert.ok(outputContent.includes('characters'), 'marker should mention characters');
+    });
+
+    it('should keep content under 50KB threshold unchanged', () => {
+      // Create a single line under the threshold
+      const shortLine = 'x'.repeat(40000);
+      const toolResult = {
+        type: 'tool_result',
+        content: shortLine,
+      };
+
+      inputFile = createTempJsonl([
+        { type: 'assistant', message: { content: [toolResult] } },
+      ]);
+
+      outputFile = preprocessTranscript(inputFile, { truncateLines: 30 });
+      const result = readJsonl(outputFile);
+
+      const outputContent = result[0].message.content[0].content;
+
+      // Should not be truncated
+      assert.strictEqual(outputContent.length, shortLine.length);
+      assert.ok(!outputContent.includes('truncated'), 'should not contain truncation marker');
+    });
+
+    it('should truncate minified JS style content (long single line)', () => {
+      // Simulate minified JS - long line with no newlines
+      const minifiedJS = 'function a(){' + 'var x=1;'.repeat(10000) + '}';
+      const toolResult = {
+        type: 'tool_result',
+        content: minifiedJS,
+      };
+
+      inputFile = createTempJsonl([
+        { type: 'assistant', message: { content: [toolResult] } },
+      ]);
+
+      outputFile = preprocessTranscript(inputFile, { truncateLines: 30 });
+      const result = readJsonl(outputFile);
+
+      const outputContent = result[0].message.content[0].content;
+
+      assert.ok(outputContent.length < minifiedJS.length, 'minified JS should be truncated');
+      assert.ok(outputContent.startsWith('function a(){'), 'should preserve start');
+      assert.ok(outputContent.endsWith('}'), 'should preserve end');
+    });
+  });
+
+  describe('temp file uniqueness', () => {
+    it('should generate unique temp files for concurrent calls', async () => {
+      inputFile = createTempJsonl([
+        { type: 'user', message: { content: 'test' } },
+      ]);
+
+      // Make multiple concurrent calls
+      const results = await Promise.all([
+        Promise.resolve(preprocessTranscript(inputFile, { truncateLines: 30 })),
+        Promise.resolve(preprocessTranscript(inputFile, { truncateLines: 30 })),
+        Promise.resolve(preprocessTranscript(inputFile, { truncateLines: 30 })),
+      ]);
+
+      // All paths should be unique
+      const uniquePaths = new Set(results);
+      assert.strictEqual(uniquePaths.size, 3, 'all temp file paths should be unique');
+
+      // Clean up
+      for (const file of results) {
+        try { fs.unlinkSync(file); } catch {}
+      }
+    });
+
+    it('should include random component in temp filename', () => {
+      inputFile = createTempJsonl([
+        { type: 'user', message: { content: 'test' } },
+      ]);
+
+      outputFile = preprocessTranscript(inputFile, { truncateLines: 30 });
+
+      // The filename should have a random component (alphanumeric after the PID)
+      const filename = path.basename(outputFile);
+      // Pattern: preprocessed-transcript-{timestamp}-{pid}-{random}.jsonl
+      const parts = filename.split('-');
+      assert.ok(parts.length >= 5, 'filename should have multiple parts including random suffix');
+    });
+  });
 });

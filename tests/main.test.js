@@ -25,6 +25,23 @@ function createTempJsonl(dir, entries, filename = null) {
   return tmpFile;
 }
 
+// Helper to create a mock spawner that immediately exits with given code
+function createMockSpawner(exitCode = 0) {
+  return (cmd, args, options) => {
+    const mockChild = {
+      on: (event, cb) => {
+        if (event === 'close') {
+          setImmediate(() => cb(exitCode));
+        }
+        return mockChild;
+      },
+      stdout: { on: () => {} },
+      stderr: { on: () => {} },
+    };
+    return mockChild;
+  };
+}
+
 // Default config for tests
 const defaultTestConfig = {
   TRUNCATE_LINES: 30,
@@ -38,6 +55,7 @@ describe('main', () => {
   let outputsDir;
   let logMessages;
   let mockLog;
+  let mockSpawner;
 
   beforeEach(() => {
     // Create a unique temp directory structure for each test
@@ -49,6 +67,9 @@ describe('main', () => {
     // Capture log messages
     logMessages = [];
     mockLog = (msg) => logMessages.push(msg);
+
+    // Create a mock spawner that exits immediately with success
+    mockSpawner = createMockSpawner(0);
   });
 
   afterEach(() => {
@@ -84,6 +105,7 @@ describe('main', () => {
         config: defaultTestConfig,
         stateDir,
         outputsDir,
+        spawner: mockSpawner,
       });
 
       // State dir should now exist
@@ -125,6 +147,7 @@ describe('main', () => {
         config: defaultTestConfig,
         stateDir,
         outputsDir,
+        spawner: mockSpawner,
       });
 
       // Old log should be cleaned up
@@ -145,6 +168,7 @@ describe('main', () => {
         config: defaultTestConfig,
         stateDir,
         outputsDir,
+        spawner: mockSpawner,
       });
 
       // Should exit gracefully
@@ -177,6 +201,7 @@ describe('main', () => {
         config: defaultTestConfig,
         stateDir,
         outputsDir,
+        spawner: mockSpawner,
       });
 
       // Should exit gracefully
@@ -208,6 +233,7 @@ describe('main', () => {
         config: { ...defaultTestConfig, MIN_LINES: 10 },
         stateDir,
         outputsDir,
+        spawner: mockSpawner,
       });
 
       // Should exit gracefully
@@ -245,6 +271,7 @@ describe('main', () => {
         config: defaultTestConfig,
         stateDir,
         outputsDir,
+        spawner: mockSpawner,
       });
 
       // Should log processing
@@ -252,6 +279,64 @@ describe('main', () => {
         (msg) => msg.includes('Processing') || msg.includes('complete')
       );
       assert.ok(processingLog, `Should log processing. Got: ${JSON.stringify(logMessages)}`);
+
+      // Clean up
+      fs.rmSync(transcriptDir, { recursive: true, force: true });
+    });
+
+    it('should return 0 on successful processing', async () => {
+      const { main } = await import('../scripts/trigger.js');
+
+      const transcriptDir = createTempDir();
+      const transcriptPath = createTempJsonl(transcriptDir, [
+        { type: 'user', message: { content: '1' } },
+        { type: 'assistant', message: { content: '2' } },
+        { type: 'user', message: { content: '3' } },
+        { type: 'assistant', message: { content: '4' } },
+        { type: 'user', message: { content: '5' } },
+        { type: 'assistant', message: { content: '6' } },
+      ]);
+
+      const result = await main({
+        transcriptPath,
+        log: mockLog,
+        config: defaultTestConfig,
+        stateDir,
+        outputsDir,
+        spawner: mockSpawner,
+      });
+
+      assert.strictEqual(result, 0, 'Should return 0 on success');
+
+      // Clean up
+      fs.rmSync(transcriptDir, { recursive: true, force: true });
+    });
+
+    it('should return 1 when processing fails', async () => {
+      const { main } = await import('../scripts/trigger.js');
+
+      const transcriptDir = createTempDir();
+      const transcriptPath = createTempJsonl(transcriptDir, [
+        { type: 'user', message: { content: '1' } },
+        { type: 'assistant', message: { content: '2' } },
+        { type: 'user', message: { content: '3' } },
+        { type: 'assistant', message: { content: '4' } },
+        { type: 'user', message: { content: '5' } },
+        { type: 'assistant', message: { content: '6' } },
+      ]);
+
+      const failingSpawner = createMockSpawner(1);
+
+      const result = await main({
+        transcriptPath,
+        log: mockLog,
+        config: defaultTestConfig,
+        stateDir,
+        outputsDir,
+        spawner: failingSpawner,
+      });
+
+      assert.strictEqual(result, 1, 'Should return 1 on failure');
 
       // Clean up
       fs.rmSync(transcriptDir, { recursive: true, force: true });

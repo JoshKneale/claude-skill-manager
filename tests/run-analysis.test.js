@@ -361,4 +361,60 @@ describe('runAnalysis', () => {
       assert.strictEqual(filesAfter.length, filesBefore.length, 'no new files should be created');
     });
   });
+
+  describe('error handling', () => {
+    it('should reject promise when spawn emits error event', async () => {
+      const { runAnalysis } = await import('../scripts/trigger.js');
+
+      const mockSpawner = (cmd, args, options) => {
+        const mockChild = {
+          on: (event, cb) => {
+            if (event === 'error') {
+              setImmediate(() => cb(new Error('spawn ENOENT')));
+            }
+            return mockChild;
+          },
+          stdout: { on: () => {} },
+          stderr: { on: () => {} },
+        };
+        return mockChild;
+      };
+
+      await assert.rejects(
+        runAnalysis(transcriptPath, { spawner: mockSpawner }),
+        {
+          message: 'spawn ENOENT'
+        }
+      );
+    });
+
+    it('should reject with error when claude command not found', async () => {
+      const { runAnalysis } = await import('../scripts/trigger.js');
+
+      const mockSpawner = (cmd, args, options) => {
+        const mockChild = {
+          on: (event, cb) => {
+            if (event === 'error') {
+              // Simulate command not found error
+              const err = new Error('spawn claude ENOENT');
+              err.code = 'ENOENT';
+              setImmediate(() => cb(err));
+            }
+            return mockChild;
+          },
+          stdout: { on: () => {} },
+          stderr: { on: () => {} },
+        };
+        return mockChild;
+      };
+
+      await assert.rejects(
+        runAnalysis(transcriptPath, { spawner: mockSpawner }),
+        (err) => {
+          assert.ok(err.message.includes('ENOENT'), 'error should include ENOENT');
+          return true;
+        }
+      );
+    });
+  });
 });

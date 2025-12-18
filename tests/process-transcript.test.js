@@ -25,10 +25,28 @@ function createTempJsonl(dir, entries) {
   return tmpFile;
 }
 
+// Helper to create a mock spawner that immediately exits with success
+function createMockSpawner(exitCode = 0) {
+  return (cmd, args, options) => {
+    const mockChild = {
+      on: (event, cb) => {
+        if (event === 'close') {
+          setImmediate(() => cb(exitCode));
+        }
+        return mockChild;
+      },
+      stdout: { on: () => {} },
+      stderr: { on: () => {} },
+    };
+    return mockChild;
+  };
+}
+
 describe('processTranscript', () => {
   let testDir;
   let logMessages;
   let mockLog;
+  let mockSpawner;
 
   beforeEach(() => {
     testDir = createTempDir();
@@ -36,6 +54,9 @@ describe('processTranscript', () => {
     // Capture log messages
     logMessages = [];
     mockLog = (msg) => logMessages.push(msg);
+
+    // Create a mock spawner that exits immediately
+    mockSpawner = createMockSpawner(0);
   });
 
   afterEach(() => {
@@ -48,23 +69,19 @@ describe('processTranscript', () => {
 
   describe('preprocessing', () => {
     it('should preprocess transcript before analysis', async () => {
-      const { processTranscript, runAnalysis } = await import('../scripts/trigger.js');
+      const { processTranscript } = await import('../scripts/trigger.js');
 
       const transcriptPath = createTempJsonl(testDir, [
         { type: 'user', userType: 'external', cwd: '/test', message: { role: 'user', content: 'hello' } },
         { type: 'file-history-snapshot', data: 'should be filtered' },
       ]);
 
-      let capturedPath = null;
-
-      // Mock runAnalysis module-level to capture the path
-      const originalRunAnalysis = runAnalysis;
-
       await processTranscript({
         transcriptPath,
         log: mockLog,
         config: { TRUNCATE_LINES: 30, SAVE_OUTPUT: false },
         outputsDir: testDir,
+        spawner: mockSpawner,
       });
 
       // Log should indicate preprocessing happened
@@ -104,6 +121,7 @@ describe('processTranscript', () => {
         log: mockLog,
         config: { TRUNCATE_LINES: 30, SAVE_OUTPUT: false },
         outputsDir: testDir,
+        spawner: mockSpawner,
       });
 
       // Should log size reduction info
@@ -127,6 +145,7 @@ describe('processTranscript', () => {
         log: mockLog,
         config: { TRUNCATE_LINES: 30, SAVE_OUTPUT: false },
         outputsDir: testDir,
+        spawner: mockSpawner,
       });
 
       // Should log duration
@@ -148,6 +167,7 @@ describe('processTranscript', () => {
         log: mockLog,
         config: { TRUNCATE_LINES: 30, SAVE_OUTPUT: false },
         outputsDir: testDir,
+        spawner: mockSpawner,
       });
 
       // Should log the transcript being processed
@@ -171,10 +191,33 @@ describe('processTranscript', () => {
         log: mockLog,
         config: { TRUNCATE_LINES: 30, SAVE_OUTPUT: false },
         outputsDir: testDir,
+        spawner: mockSpawner,
       });
 
       // Result should have success property
       assert.ok('success' in result, 'Result should have success property');
+      assert.strictEqual(result.success, true, 'Result should indicate success');
+    });
+
+    it('should return failure result when spawner exits with non-zero code', async () => {
+      const { processTranscript } = await import('../scripts/trigger.js');
+
+      const transcriptPath = createTempJsonl(testDir, [
+        { type: 'user', message: { content: 'hello' } },
+      ]);
+
+      const failingSpawner = createMockSpawner(1);
+
+      const result = await processTranscript({
+        transcriptPath,
+        log: mockLog,
+        config: { TRUNCATE_LINES: 30, SAVE_OUTPUT: false },
+        outputsDir: testDir,
+        spawner: failingSpawner,
+      });
+
+      assert.strictEqual(result.success, false, 'Result should indicate failure');
+      assert.strictEqual(result.exitCode, 1, 'Result should include exit code');
     });
   });
 });
