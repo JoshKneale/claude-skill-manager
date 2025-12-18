@@ -18,6 +18,7 @@ describe('loadConfig', () => {
     'SKILL_MANAGER_SKIP_SUBAGENTS',
     'SKILL_MANAGER_DISCOVERY_LIMIT',
     'SKILL_MANAGER_MIN_FILE_SIZE',
+    'SKILL_MANAGER_SAVE_OUTPUT',
   ];
 
   beforeEach(() => {
@@ -94,14 +95,25 @@ describe('loadConfig', () => {
     assert.strictEqual(config.DISCOVERY_LIMIT, 500);
   });
 
-  it('should use default MIN_FILE_SIZE of 500 when env var not set', () => {
+  it('should use default MIN_FILE_SIZE of 2000 when env var not set', () => {
     const config = loadConfig();
-    assert.strictEqual(config.MIN_FILE_SIZE, 500);
+    assert.strictEqual(config.MIN_FILE_SIZE, 2000);
   });
 
   it('should override MIN_FILE_SIZE from env var', () => {
     process.env.SKILL_MANAGER_MIN_FILE_SIZE = '1000';
     const config = loadConfig();
     assert.strictEqual(config.MIN_FILE_SIZE, 1000);
+  });
+
+  it('should use default SAVE_OUTPUT of false when env var not set', () => {
+    const config = loadConfig();
+    assert.strictEqual(config.SAVE_OUTPUT, false);
+  });
+
+  it('should set SAVE_OUTPUT to true when env var is "1"', () => {
+    process.env.SKILL_MANAGER_SAVE_OUTPUT = '1';
+    const config = loadConfig();
+    assert.strictEqual(config.SAVE_OUTPUT, true);
   });
 });

@@ -12,7 +12,7 @@ import { spawn } from 'node:child_process';
 
 /**
  * Load configuration from environment variables with defaults
- * @returns {{ TRANSCRIPT_COUNT: number, LOOKBACK_DAYS: number, TRUNCATE_LINES: number, SKIP_SUBAGENTS: boolean, DISCOVERY_LIMIT: number, MIN_FILE_SIZE: number }}
+ * @returns {{ TRANSCRIPT_COUNT: number, LOOKBACK_DAYS: number, TRUNCATE_LINES: number, SKIP_SUBAGENTS: boolean, DISCOVERY_LIMIT: number, MIN_FILE_SIZE: number, SAVE_OUTPUT: boolean }}
  */
 export function loadConfig() {
   return {
@@ -22,6 +22,7 @@ export function loadConfig() {
     SKIP_SUBAGENTS: process.env.SKILL_MANAGER_SKIP_SUBAGENTS !== '0', // default: true
     DISCOVERY_LIMIT: parseInt(process.env.SKILL_MANAGER_DISCOVERY_LIMIT, 10) || 1000,
     MIN_FILE_SIZE: parseInt(process.env.SKILL_MANAGER_MIN_FILE_SIZE, 10) || 2000,
+    SAVE_OUTPUT: process.env.SKILL_MANAGER_SAVE_OUTPUT === '1', // default: false
   };
 }
 
@@ -31,7 +32,7 @@ export function loadConfig() {
 
 /**
  * Build standard paths used by skill manager
- * @returns {{ STATE_DIR: string, STATE_FILE: string, LOG_FILE: string, PROJECTS_DIR: string }}
+ * @returns {{ STATE_DIR: string, STATE_FILE: string, LOG_FILE: string, OUTPUTS_DIR: string, PROJECTS_DIR: string }}
  */
 export function buildPaths() {
   const homeDir = process.env.HOME || process.env.USERPROFILE;
@@ -42,6 +43,7 @@ export function buildPaths() {
     STATE_DIR: stateDir,
     STATE_FILE: `${stateDir}/analyzed.json`,
     LOG_FILE: `${stateDir}/skill-manager-${today}.log`,
+    OUTPUTS_DIR: `${stateDir}/outputs`,
     PROJECTS_DIR: `${homeDir}/.claude/projects`,
   };
 }
@@ -246,14 +248,14 @@ export function writeStateFile(stateFilePath, state) {
 }
 
 /**
- * Delete log files older than 7 days
- * Equivalent to: find "$STATE_DIR" -name "skill-manager-*.log" -mtime +7 -delete 2>/dev/null || true
+ * Delete log files older than 7 days from stateDir and outputs subdirectory
  * @param {string} stateDir - The state directory path
  */
 export function cleanupOldLogs(stateDir) {
   const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
   const cutoffTime = Date.now() - SEVEN_DAYS_MS;
 
+  // Clean audit logs (skill-manager-*.log)
   let files;
   try {
     files = fs.readdirSync(stateDir);
@@ -269,6 +271,33 @@ export function cleanupOldLogs(stateDir) {
     }
 
     const filePath = path.join(stateDir, file);
+
+    try {
+      const stat = fs.statSync(filePath);
+      if (stat.mtimeMs < cutoffTime) {
+        fs.unlinkSync(filePath);
+      }
+    } catch (err) {
+      // File may have been deleted or can't be accessed - silently ignore
+    }
+  }
+
+  // Clean output files (outputs/*.log)
+  const outputsDir = path.join(stateDir, 'outputs');
+  let outputFiles;
+  try {
+    outputFiles = fs.readdirSync(outputsDir);
+  } catch (err) {
+    // Directory doesn't exist - nothing to clean
+    return;
+  }
+
+  for (const file of outputFiles) {
+    if (!file.endsWith('.log')) {
+      continue;
+    }
+
+    const filePath = path.join(outputsDir, file);
 
     try {
       const stat = fs.statSync(filePath);
@@ -696,19 +725,48 @@ export function getCommandFilePath() {
 }
 
 /**
+ * Generate a timestamp string for output filenames
+ * Format: YYYY-MM-DD-HH-MM-SS
+ * @returns {string}
+ */
+function generateOutputTimestamp() {
+  const now = new Date();
+  return [
+    now.getFullYear(),
+    '-',
+    String(now.getMonth() + 1).padStart(2, '0'),
+    '-',
+    String(now.getDate()).padStart(2, '0'),
+    '-',
+    String(now.getHours()).padStart(2, '0'),
+    '-',
+    String(now.getMinutes()).padStart(2, '0'),
+    '-',
+    String(now.getSeconds()).padStart(2, '0'),
+  ].join('');
+}
+
+/**
  * Run skill extraction analysis on a preprocessed transcript
- * Spawns claude CLI with appropriate flags and handles output based on debug mode
+ * Spawns claude CLI with appropriate flags and optionally saves output to file
  *
  * @param {string} transcriptPath - Path to the preprocessed transcript file
  * @param {Object} options
- * @param {string} options.logFile - Path to log file (used in debug mode)
+ * @param {boolean} [options.saveOutput] - Whether to save output to individual file
+ * @param {string} [options.outputsDir] - Directory to save output files (required if saveOutput is true)
+ * @param {string} [options.originalTranscriptPath] - Original transcript path for deriving output filename
  * @param {string} [options.commandFile] - Path to command file (defaults to ../commands/skill-manager.md)
  * @param {function} [options.spawner] - Optional spawn function for testing (defaults to child_process.spawn)
- * @returns {Promise<{ exitCode: number }>} - Exit code from claude process
+ * @returns {Promise<{ exitCode: number, outputFile?: string }>} - Exit code and optional output file path
  */
 export async function runAnalysis(transcriptPath, options) {
-  const { logFile, commandFile = getCommandFilePath(), spawner = spawn } = options;
-  const isDebugMode = process.env.SKILL_MANAGER_DEBUG === '1';
+  const {
+    saveOutput = false,
+    outputsDir,
+    originalTranscriptPath,
+    commandFile = getCommandFilePath(),
+    spawner = spawn,
+  } = options;
 
   // Use --system-prompt-file instead of slash command (slash commands don't work with --print)
   // Minimal permissions: Read (transcript + existing skills), Write (skills dir only), Glob/Grep (find skills)
@@ -723,21 +781,35 @@ export async function runAnalysis(transcriptPath, options) {
 
   return new Promise((resolve) => {
     const child = spawner('claude', args, {
-      stdio: isDebugMode ? ['ignore', 'pipe', 'pipe'] : ['ignore', 'ignore', 'ignore'],
+      stdio: saveOutput ? ['ignore', 'pipe', 'pipe'] : ['ignore', 'ignore', 'ignore'],
     });
 
-    // In debug mode, capture output to log file
-    if (isDebugMode && child.stdout && child.stderr) {
+    let outputFile;
+    let outputChunks = [];
+
+    // When saving output, collect stdout/stderr
+    if (saveOutput && child.stdout && child.stderr) {
       child.stdout.on('data', (data) => {
-        fs.appendFileSync(logFile, data.toString());
+        outputChunks.push(data);
       });
       child.stderr.on('data', (data) => {
-        fs.appendFileSync(logFile, data.toString());
+        outputChunks.push(data);
       });
     }
 
     child.on('close', (code) => {
-      resolve({ exitCode: code ?? 0 });
+      // Write collected output to individual file
+      if (saveOutput && outputChunks.length > 0 && outputsDir) {
+        const timestamp = generateOutputTimestamp();
+        const basename = path.basename(originalTranscriptPath || transcriptPath, '.jsonl');
+        outputFile = path.join(outputsDir, `${timestamp}-${basename}.log`);
+
+        // Ensure outputs directory exists
+        fs.mkdirSync(outputsDir, { recursive: true });
+        fs.writeFileSync(outputFile, Buffer.concat(outputChunks));
+      }
+
+      resolve({ exitCode: code ?? 0, outputFile });
     });
   });
 }
@@ -760,7 +832,7 @@ export async function runAnalysis(transcriptPath, options) {
  * @param {{ version: number, transcripts: Object }} options.state - Current state object
  * @param {string} options.stateFile - Path to the state file
  * @param {function(string): void} options.log - Logging function
- * @param {function(string): { exitCode: number }} options.runAnalysis - Function to run analysis on preprocessed file
+ * @param {function(string, string): { exitCode: number }} options.runAnalysis - Function to run analysis (preprocessedPath, originalPath)
  * @param {{ TRUNCATE_LINES: number }} options.config - Configuration options
  * @returns {Promise<{ success?: boolean, skipped?: boolean, reason?: string, transcriptPath: string, exitCode?: number }>}
  */
@@ -793,7 +865,7 @@ export async function processTranscript({ transcriptPath, state, stateFile, log,
 
   let result;
   try {
-    result = await runAnalysis(preprocessedFile);
+    result = await runAnalysis(preprocessedFile, transcriptPath);
   } finally {
     // Always clean up temp file
     try {
@@ -920,18 +992,32 @@ export async function main({ stateDir, projectsDir, log, runAnalysis, config, st
 const isMainModule = import.meta.url === `file://${process.argv[1]}`;
 
 if (isMainModule) {
-  // Check for --background flag (child process mode)
-  if (process.argv.includes('--background')) {
-    // Running as background worker - do the actual work
-    const paths = buildPaths();
-    const config = loadConfig();
-    const logFn = (...args) => log(paths.LOG_FILE, ...args);
+  const paths = buildPaths();
+  const config = loadConfig();
+  const logFn = (...args) => log(paths.LOG_FILE, ...args);
+
+  // Detect execution context:
+  // - TTY (interactive terminal): run directly
+  // - Piped stdin (hook context): spawn detached child and exit quickly
+  // - --worker flag: internal flag for spawned child process
+  const isWorker = process.argv.includes('--worker');
+  const isInteractive = process.stdin.isTTY;
+
+  if (isWorker || isInteractive) {
+    // Run the skill extraction directly
+    if (!isWorker) {
+      logFn('=== Manual run ===');
+    }
 
     main({
       stateDir: paths.STATE_DIR,
       projectsDir: paths.PROJECTS_DIR,
       log: logFn,
-      runAnalysis: (transcriptPath) => runAnalysis(transcriptPath, { logFile: paths.LOG_FILE }),
+      runAnalysis: (preprocessedPath, originalPath) => runAnalysis(preprocessedPath, {
+        saveOutput: config.SAVE_OUTPUT,
+        outputsDir: paths.OUTPUTS_DIR,
+        originalTranscriptPath: originalPath,
+      }),
       config,
       stdin: process.stdin,
     }).catch((err) => {
@@ -939,17 +1025,14 @@ if (isMainModule) {
       process.exit(1);
     });
   } else {
-    // Parent process - spawn child and exit immediately
-    const paths = buildPaths();
-    const logFn = (...args) => log(paths.LOG_FILE, ...args);
-
+    // Hook context - spawn detached child and exit quickly
     logFn('=== SessionEnd triggered ===');
 
     // Drain stdin for hook compliance
     process.stdin.resume();
     process.stdin.on('end', () => {
-      // Spawn detached child process
-      const child = spawn(process.execPath, [process.argv[1], '--background'], {
+      // Spawn detached child process with --worker flag
+      const child = spawn(process.execPath, [process.argv[1], '--worker'], {
         detached: true,
         stdio: 'ignore',
       });

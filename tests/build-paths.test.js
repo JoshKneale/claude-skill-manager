@@ -32,4 +32,9 @@ describe('buildPaths', () => {
     const paths = buildPaths();
     assert.strictEqual(paths.PROJECTS_DIR, `${homeDir}/.claude/projects`);
   });
+
+  it('should construct OUTPUTS_DIR as $STATE_DIR/outputs', () => {
+    const paths = buildPaths();
+    assert.strictEqual(paths.OUTPUTS_DIR, `${homeDir}/.claude/skill-manager/outputs`);
+  });
 });

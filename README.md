@@ -196,7 +196,7 @@ Skills are written to `.claude/skills/` (project-level). This means:
 |----------|---------|-------------|
 | `SKILL_MANAGER_COUNT` | `1` | Number of transcripts to analyze per session |
 | `SKILL_MANAGER_LOOKBACK_DAYS` | `7` | Only consider transcripts modified within N days |
-| `SKILL_MANAGER_DEBUG` | `0` | Set to `1` to capture full Claude output in logs |
+| `SKILL_MANAGER_SAVE_OUTPUT` | `0` | Set to `1` to save Claude output to individual files |
 | `SKILL_MANAGER_TRUNCATE_LINES` | `30` | Lines to keep at start/end of large tool results |
 
 ### System Behavior
@@ -318,15 +318,18 @@ tail -f ~/.claude/skill-manager/skill-manager-$(date +%Y-%m-%d).log
 
 Skill extraction runs in the background so your session exits immediately. Check the log file to see results or troubleshoot issues.
 
-### Debug mode
+### Saving output for debugging
 
-By default, only status messages are logged. To capture full Claude output for debugging:
+By default, Claude's output is discarded. To save full output to individual files for debugging or comparing prompt iterations:
 
 ```bash
-export SKILL_MANAGER_DEBUG=1
+export SKILL_MANAGER_SAVE_OUTPUT=1
 ```
 
-This is useful when troubleshooting why skill extraction isn't producing expected results.
+Output files are saved to `~/.claude/skill-manager/outputs/` with the format `YYYY-MM-DD-HH-MM-SS-<transcript-id>.log`. This is useful when:
+- Troubleshooting why skill extraction isn't producing expected results
+- Comparing results across iterations of the skill-manager prompt
+- Debugging specific transcript analyses
 
 ## Contributing
 

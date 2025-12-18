@@ -51,7 +51,7 @@ Environment variables to customize behavior:
 |----------|---------|-------------|
 | `SKILL_MANAGER_COUNT` | `1` | Number of transcripts to analyze per SessionEnd |
 | `SKILL_MANAGER_LOOKBACK_DAYS` | `7` | Only consider transcripts modified within N days |
-| `SKILL_MANAGER_DEBUG` | `0` | Set to `1` to capture full Claude output in logs |
+| `SKILL_MANAGER_SAVE_OUTPUT` | `0` | Set to `1` to save Claude output to individual files in `outputs/` |
 | `SKILL_MANAGER_TRUNCATE_LINES` | `30` | Lines to keep at start/end of large tool results (reduces tokens) |
 | `SKILL_MANAGER_MIN_LINES` | `10` | Skip transcripts with fewer than N lines (filters warmup sessions) |
 | `SKILL_MANAGER_SKIP_SUBAGENTS` | `1` | Skip sub-agent sessions (Task tool spawned). Set to `0` to include them |
@@ -59,14 +59,17 @@ Environment variables to customize behavior:
 ## Testing Changes
 
 ```bash
-# Enable debug mode
-export SKILL_MANAGER_DEBUG=1
+# Enable output capture for debugging/prompt iteration
+export SKILL_MANAGER_SAVE_OUTPUT=1
 
 # Manual extraction on any transcript
 /skill-manager /path/to/transcript.jsonl
 
-# Watch today's logs in real-time
+# Watch today's audit log in real-time
 tail -f ~/.claude/skill-manager/skill-manager-$(date +%Y-%m-%d).log
+
+# View saved output files (when SAVE_OUTPUT=1)
+ls -la ~/.claude/skill-manager/outputs/
 
 # Check state file (analyzed transcripts)
 cat ~/.claude/skill-manager/analyzed.json

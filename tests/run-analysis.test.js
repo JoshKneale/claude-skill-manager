@@ -4,8 +4,8 @@
  *
  * These tests verify that runAnalysis:
  * 1. Spawns claude with correct arguments (--model sonnet, -p, --system-prompt-file)
- * 2. Returns { exitCode: number }
- * 3. Handles debug mode (captures output to log) vs normal mode (discards output)
+ * 2. Returns { exitCode: number, outputFile?: string }
+ * 3. Handles saveOutput mode (saves to individual file) vs normal mode (discards output)
  */
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
@@ -13,34 +13,23 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { spawn } from 'node:child_process';
 
 describe('runAnalysis', () => {
   let tmpDir;
   let transcriptPath;
-  let logFile;
-  let originalEnv;
+  let outputsDir;
 
   beforeEach(() => {
-    // Save original env
-    originalEnv = { ...process.env };
-
     // Create temp directory for test files
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'run-analysis-test-'));
     transcriptPath = path.join(tmpDir, 'test-transcript.jsonl');
-    logFile = path.join(tmpDir, 'test.log');
+    outputsDir = path.join(tmpDir, 'outputs');
 
     // Create a dummy transcript file
     fs.writeFileSync(transcriptPath, '{"type":"summary"}\n');
-
-    // Clear debug mode by default
-    delete process.env.SKILL_MANAGER_DEBUG;
   });
 
   afterEach(() => {
-    // Restore original env
-    process.env = originalEnv;
-
     // Clean up temp directory
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -74,7 +63,7 @@ describe('runAnalysis', () => {
       return mockChild;
     };
 
-    await runAnalysis(transcriptPath, { logFile, spawner: mockSpawner });
+    await runAnalysis(transcriptPath, { spawner: mockSpawner });
 
     assert.ok(spawnedArgs, 'spawner should have been called');
     assert.ok(spawnedArgs.args.includes('--model'), 'args should include --model');
@@ -100,7 +89,7 @@ describe('runAnalysis', () => {
       return mockChild;
     };
 
-    await runAnalysis(transcriptPath, { logFile, spawner: mockSpawner });
+    await runAnalysis(transcriptPath, { spawner: mockSpawner });
 
     assert.ok(spawnedArgs, 'spawner should have been called');
     assert.ok(spawnedArgs.args.includes('-p'), 'args should include -p flag');
@@ -129,7 +118,7 @@ describe('runAnalysis', () => {
       return mockChild;
     };
 
-    await runAnalysis(transcriptPath, { logFile, spawner: mockSpawner });
+    await runAnalysis(transcriptPath, { spawner: mockSpawner });
 
     assert.ok(spawnedArgs, 'spawner should have been called');
     assert.ok(spawnedArgs.args.includes('--system-prompt-file'), 'args should include --system-prompt-file');
@@ -155,7 +144,7 @@ describe('runAnalysis', () => {
       return mockChild;
     };
 
-    const result = await runAnalysis(transcriptPath, { logFile, spawner: mockSpawner });
+    const result = await runAnalysis(transcriptPath, { spawner: mockSpawner });
 
     assert.strictEqual(typeof result, 'object', 'result should be an object');
     assert.strictEqual(result.exitCode, 0, 'exitCode should be 0 on success');
@@ -176,20 +165,15 @@ describe('runAnalysis', () => {
       return mockChild;
     };
 
-    const result = await runAnalysis(transcriptPath, { logFile, spawner: mockSpawner });
+    const result = await runAnalysis(transcriptPath, { spawner: mockSpawner });
 
     assert.strictEqual(typeof result, 'object', 'result should be an object');
     assert.strictEqual(result.exitCode, 1, 'exitCode should be 1 on failure');
   });
 
-  describe('debug mode', () => {
-    it('should capture claude output to log when SKILL_MANAGER_DEBUG=1', async () => {
-      process.env.SKILL_MANAGER_DEBUG = '1';
-
+  describe('saveOutput mode', () => {
+    it('should save claude output to individual file when saveOutput=true', async () => {
       const { runAnalysis } = await import('../scripts/trigger.js');
-
-      let capturedStdout = null;
-      let capturedStderr = null;
 
       const mockSpawner = (cmd, args, options) => {
         const stdoutListeners = [];
@@ -200,8 +184,8 @@ describe('runAnalysis', () => {
             if (event === 'close') {
               setImmediate(() => {
                 // Emit some output before closing
-                stdoutListeners.forEach(listener => listener('mock stdout output'));
-                stderrListeners.forEach(listener => listener('mock stderr output'));
+                stdoutListeners.forEach(listener => listener(Buffer.from('mock stdout output')));
+                stderrListeners.forEach(listener => listener(Buffer.from('mock stderr output')));
                 cb(0);
               });
             }
@@ -211,7 +195,6 @@ describe('runAnalysis', () => {
             on: (event, cb) => {
               if (event === 'data') {
                 stdoutListeners.push(cb);
-                capturedStdout = true; // Listener was registered
               }
             },
           },
@@ -219,7 +202,6 @@ describe('runAnalysis', () => {
             on: (event, cb) => {
               if (event === 'data') {
                 stderrListeners.push(cb);
-                capturedStderr = true; // Listener was registered
               }
             },
           },
@@ -227,26 +209,135 @@ describe('runAnalysis', () => {
         return mockChild;
       };
 
-      await runAnalysis(transcriptPath, { logFile, spawner: mockSpawner });
+      const result = await runAnalysis(transcriptPath, {
+        saveOutput: true,
+        outputsDir,
+        originalTranscriptPath: '/path/to/original-transcript.jsonl',
+        spawner: mockSpawner,
+      });
 
-      // In debug mode, stdout and stderr should be captured (listeners registered)
-      assert.strictEqual(capturedStdout, true, 'stdout should be captured in debug mode');
-      assert.strictEqual(capturedStderr, true, 'stderr should be captured in debug mode');
+      // Should return outputFile path
+      assert.ok(result.outputFile, 'result should include outputFile path');
+      assert.ok(result.outputFile.includes('original-transcript'), 'outputFile should include transcript basename');
+      assert.ok(result.outputFile.endsWith('.log'), 'outputFile should end with .log');
 
-      // Log file should contain the output
-      const logContent = fs.readFileSync(logFile, 'utf8');
-      assert.ok(logContent.includes('mock stdout output'), 'log should contain stdout');
+      // File should exist and contain output
+      assert.ok(fs.existsSync(result.outputFile), 'output file should exist');
+      const content = fs.readFileSync(result.outputFile, 'utf8');
+      assert.ok(content.includes('mock stdout output'), 'output file should contain stdout');
+      assert.ok(content.includes('mock stderr output'), 'output file should contain stderr');
+    });
+
+    it('should create outputs directory if it does not exist', async () => {
+      const { runAnalysis } = await import('../scripts/trigger.js');
+
+      const nonExistentOutputsDir = path.join(tmpDir, 'new-outputs');
+      assert.strictEqual(fs.existsSync(nonExistentOutputsDir), false, 'outputs dir should not exist yet');
+
+      const mockSpawner = (cmd, args, options) => {
+        const stdoutListeners = [];
+
+        const mockChild = {
+          on: (event, cb) => {
+            if (event === 'close') {
+              setImmediate(() => {
+                stdoutListeners.forEach(listener => listener(Buffer.from('output')));
+                cb(0);
+              });
+            }
+            return mockChild;
+          },
+          stdout: {
+            on: (event, cb) => {
+              if (event === 'data') stdoutListeners.push(cb);
+            },
+          },
+          stderr: { on: () => {} },
+        };
+        return mockChild;
+      };
+
+      const result = await runAnalysis(transcriptPath, {
+        saveOutput: true,
+        outputsDir: nonExistentOutputsDir,
+        originalTranscriptPath: transcriptPath,
+        spawner: mockSpawner,
+      });
+
+      assert.ok(fs.existsSync(nonExistentOutputsDir), 'outputs dir should be created');
+      assert.ok(result.outputFile, 'should return outputFile');
+    });
+
+    it('should use timestamp-basename format for output filename', async () => {
+      const { runAnalysis } = await import('../scripts/trigger.js');
+
+      const mockSpawner = (cmd, args, options) => {
+        const stdoutListeners = [];
+
+        const mockChild = {
+          on: (event, cb) => {
+            if (event === 'close') {
+              setImmediate(() => {
+                stdoutListeners.forEach(listener => listener(Buffer.from('output')));
+                cb(0);
+              });
+            }
+            return mockChild;
+          },
+          stdout: {
+            on: (event, cb) => {
+              if (event === 'data') stdoutListeners.push(cb);
+            },
+          },
+          stderr: { on: () => {} },
+        };
+        return mockChild;
+      };
+
+      const result = await runAnalysis(transcriptPath, {
+        saveOutput: true,
+        outputsDir,
+        originalTranscriptPath: '/some/path/my-session.jsonl',
+        spawner: mockSpawner,
+      });
+
+      // Filename should be YYYY-MM-DD-HH-MM-SS-basename.log
+      const filename = path.basename(result.outputFile);
+      assert.match(filename, /^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}-my-session\.log$/, 'filename should match timestamp-basename.log pattern');
     });
   });
 
-  describe('normal mode', () => {
-    it('should discard claude output when SKILL_MANAGER_DEBUG is not set', async () => {
-      delete process.env.SKILL_MANAGER_DEBUG;
-
+  describe('normal mode (saveOutput=false)', () => {
+    it('should discard claude output when saveOutput is not set', async () => {
       const { runAnalysis } = await import('../scripts/trigger.js');
 
-      let stdoutListenerRegistered = false;
-      let stderrListenerRegistered = false;
+      let stdioConfig = null;
+
+      const mockSpawner = (cmd, args, options) => {
+        stdioConfig = options.stdio;
+        const mockChild = {
+          on: (event, cb) => {
+            if (event === 'close') setImmediate(() => cb(0));
+            return mockChild;
+          },
+          stdout: { on: () => {} },
+          stderr: { on: () => {} },
+        };
+        return mockChild;
+      };
+
+      const result = await runAnalysis(transcriptPath, { spawner: mockSpawner });
+
+      // In normal mode, stdio should be 'ignore'
+      assert.deepStrictEqual(stdioConfig, ['ignore', 'ignore', 'ignore'], 'stdio should be ignore in normal mode');
+      assert.strictEqual(result.outputFile, undefined, 'outputFile should not be set');
+    });
+
+    it('should not create any output files when saveOutput=false', async () => {
+      const { runAnalysis } = await import('../scripts/trigger.js');
+
+      fs.mkdirSync(outputsDir, { recursive: true });
+      const filesBefore = fs.readdirSync(outputsDir);
 
       const mockSpawner = (cmd, args, options) => {
         const mockChild = {
@@ -254,33 +345,20 @@ describe('runAnalysis', () => {
             if (event === 'close') setImmediate(() => cb(0));
             return mockChild;
           },
-          stdout: {
-            on: (event, cb) => {
-              if (event === 'data') {
-                stdoutListenerRegistered = true;
-              }
-            },
-          },
-          stderr: {
-            on: (event, cb) => {
-              if (event === 'data') {
-                stderrListenerRegistered = true;
-              }
-            },
-          },
+          stdout: { on: () => {} },
+          stderr: { on: () => {} },
         };
         return mockChild;
       };
 
-      await runAnalysis(transcriptPath, { logFile, spawner: mockSpawner });
+      await runAnalysis(transcriptPath, {
+        saveOutput: false,
+        outputsDir,
+        spawner: mockSpawner,
+      });
 
-      // In normal mode, output should be discarded (no listeners, or stdio: 'ignore')
-      // The implementation might either not register listeners OR use stdio: 'ignore'
-      // We check that output is NOT being captured to the log
-      if (fs.existsSync(logFile)) {
-        const logContent = fs.readFileSync(logFile, 'utf8');
-        assert.ok(!logContent.includes('mock'), 'log should not contain claude output in normal mode');
-      }
+      const filesAfter = fs.readdirSync(outputsDir);
+      assert.strictEqual(filesAfter.length, filesBefore.length, 'no new files should be created');
     });
   });
 });

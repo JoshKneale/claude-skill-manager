@@ -101,4 +101,51 @@ describe('cleanupOldLogs', () => {
       cleanupOldLogs(nonExistentDir);
     });
   });
+
+  describe('outputs directory cleanup', () => {
+    let outputsDir;
+
+    beforeEach(() => {
+      outputsDir = path.join(stateDir, 'outputs');
+      fs.mkdirSync(outputsDir, { recursive: true });
+    });
+
+    it('should delete output files older than 7 days', () => {
+      const oldOutputFile = path.join(outputsDir, '2024-01-01-12-00-00-test.log');
+      fs.writeFileSync(oldOutputFile, 'old output content');
+      setFileAge(oldOutputFile, 10);
+
+      cleanupOldLogs(stateDir);
+
+      assert.strictEqual(fs.existsSync(oldOutputFile), false, 'Old output file should be deleted');
+    });
+
+    it('should keep output files newer than 7 days', () => {
+      const newOutputFile = path.join(outputsDir, '2024-12-15-12-00-00-test.log');
+      fs.writeFileSync(newOutputFile, 'recent output content');
+      setFileAge(newOutputFile, 3);
+
+      cleanupOldLogs(stateDir);
+
+      assert.strictEqual(fs.existsSync(newOutputFile), true, 'Recent output file should be kept');
+    });
+
+    it('should only delete .log files in outputs directory', () => {
+      const nonLogFile = path.join(outputsDir, 'some-other-file.txt');
+      fs.writeFileSync(nonLogFile, 'other content');
+      setFileAge(nonLogFile, 10);
+
+      cleanupOldLogs(stateDir);
+
+      assert.strictEqual(fs.existsSync(nonLogFile), true, 'Non-log files should be kept');
+    });
+
+    it('should not throw if outputs directory does not exist', () => {
+      fs.rmSync(outputsDir, { recursive: true, force: true });
+
+      assert.doesNotThrow(() => {
+        cleanupOldLogs(stateDir);
+      });
+    });
+  });
 });
