@@ -56,7 +56,7 @@ Only extract skills rated "medium" or higher. Maximum 3 skills per session.
 
 Before creating a skill:
 
-1. Use Glob to find existing skills: `.claude/skills/*/SKILL.md`
+1. Use Glob to find existing skills: `~/.claude/skills/*/SKILL.md`
 2. Read each existing skill's name and description
 3. Determine:
    - **Exact match**: Same skill exists → ENHANCE it (add examples, failures, troubleshooting)
@@ -69,7 +69,7 @@ Before creating a skill:
 
 ### New Skill Structure
 
-Create directory `.claude/skills/<skill-name>/` with three files. Use the templates in this plugin as your guide:
+Create directory `~/.claude/skills/<skill-name>/` with three files. Use the templates in this plugin as your guide:
 
 | File | Template | Purpose |
 |------|----------|---------|
@@ -146,7 +146,7 @@ Requirements:
 - Skills must include at least one of: failed attempts, troubleshooting, or concrete examples
 - Always include session attribution for traceability
 - Prefer enhancing existing skills over creating new ones
-- Write to project-level skills directory: `.claude/skills/`
+- Write to user-level skills directory: `~/.claude/skills/`
 - If no skills worth extracting, that's fine - explain why
 
 ## Output Summary
