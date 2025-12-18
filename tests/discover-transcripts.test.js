@@ -15,6 +15,14 @@ describe('discoverTranscripts', () => {
   let tempDir;
   let projectsDir;
 
+  // Default config for tests
+  const defaultConfig = {
+    lookbackDays: 7,
+    skipSubagents: false,
+    minFileSize: 0,
+    discoveryLimit: 1000,
+  };
+
   beforeEach(() => {
     // Create a unique temp directory for each test
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-manager-test-'));
@@ -47,12 +55,13 @@ describe('discoverTranscripts', () => {
    * Helper to create a transcript file
    * @param {string} relativePath - Path relative to projectsDir
    * @param {number} [daysAgo=0] - Age of the file in days
+   * @param {string} [content='{"type":"summary"}\n'] - File content
    * @returns {string} - Full path to the created file
    */
-  function createTranscript(relativePath, daysAgo = 0) {
+  function createTranscript(relativePath, daysAgo = 0, content = '{"type":"summary"}\n') {
     const fullPath = path.join(projectsDir, relativePath);
     fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-    fs.writeFileSync(fullPath, '{"type":"summary"}\n');
+    fs.writeFileSync(fullPath, content);
     if (daysAgo > 0) {
       setFileAge(fullPath, daysAgo);
     }
@@ -63,7 +72,7 @@ describe('discoverTranscripts', () => {
     const transcript1 = createTranscript('project-a/transcript.jsonl');
     const transcript2 = createTranscript('project-b/session.jsonl');
 
-    const result = discoverTranscripts(projectsDir, 7);
+    const result = discoverTranscripts(projectsDir, defaultConfig);
 
     assert.strictEqual(result.length, 2, 'Should find 2 transcript files');
     assert.ok(result.includes(transcript1), 'Should include transcript1');
@@ -75,7 +84,7 @@ describe('discoverTranscripts', () => {
     const deep = createTranscript('project-b/nested/deep/transcript.jsonl');
     const veryDeep = createTranscript('a/b/c/d/e/transcript.jsonl');
 
-    const result = discoverTranscripts(projectsDir, 7);
+    const result = discoverTranscripts(projectsDir, defaultConfig);
 
     assert.strictEqual(result.length, 3, 'Should find all 3 transcripts');
     assert.ok(result.includes(shallow), 'Should include shallow transcript');
@@ -88,7 +97,7 @@ describe('discoverTranscripts', () => {
     const nearBoundary = createTranscript('boundary/transcript.jsonl', 6);
     const old = createTranscript('old/transcript.jsonl', 10);
 
-    const result = discoverTranscripts(projectsDir, 7);
+    const result = discoverTranscripts(projectsDir, defaultConfig);
 
     assert.ok(result.includes(recent), 'Should include recent transcript (2 days old)');
     assert.ok(result.includes(nearBoundary), 'Should include transcript near boundary (6 days old)');
@@ -101,7 +110,7 @@ describe('discoverTranscripts', () => {
     const middle = createTranscript('middle/transcript.jsonl', 3);
     const newest = createTranscript('newest/transcript.jsonl', 1);
 
-    const result = discoverTranscripts(projectsDir, 7);
+    const result = discoverTranscripts(projectsDir, defaultConfig);
 
     assert.strictEqual(result.length, 3, 'Should find all 3 transcripts');
     assert.strictEqual(result[0], newest, 'First result should be newest');
@@ -109,28 +118,68 @@ describe('discoverTranscripts', () => {
     assert.strictEqual(result[2], oldest, 'Third result should be oldest');
   });
 
-  it('should limit to 50 candidates', () => {
+  it('should respect discoveryLimit config', () => {
     // Create 60 transcript files
     for (let i = 0; i < 60; i++) {
       createTranscript(`project-${i}/transcript.jsonl`);
     }
 
-    const result = discoverTranscripts(projectsDir, 7);
+    const config = { ...defaultConfig, discoveryLimit: 50 };
+    const result = discoverTranscripts(projectsDir, config);
 
-    assert.strictEqual(result.length, 50, 'Should limit to 50 results');
+    assert.strictEqual(result.length, 50, 'Should limit to configured discoveryLimit');
+  });
+
+  it('should skip agent-* files when skipSubagents is true', () => {
+    const regular = createTranscript('project/transcript.jsonl');
+    const agent1 = createTranscript('project/agent-abc123.jsonl');
+    const agent2 = createTranscript('project/agent-def456.jsonl');
+
+    const config = { ...defaultConfig, skipSubagents: true };
+    const result = discoverTranscripts(projectsDir, config);
+
+    assert.strictEqual(result.length, 1, 'Should only find non-agent transcript');
+    assert.ok(result.includes(regular), 'Should include regular transcript');
+    assert.ok(!result.includes(agent1), 'Should exclude agent-abc123');
+    assert.ok(!result.includes(agent2), 'Should exclude agent-def456');
+  });
+
+  it('should include agent-* files when skipSubagents is false', () => {
+    const regular = createTranscript('project/transcript.jsonl');
+    const agent = createTranscript('project/agent-abc123.jsonl');
+
+    const config = { ...defaultConfig, skipSubagents: false };
+    const result = discoverTranscripts(projectsDir, config);
+
+    assert.strictEqual(result.length, 2, 'Should find both transcripts');
+    assert.ok(result.includes(regular), 'Should include regular transcript');
+    assert.ok(result.includes(agent), 'Should include agent transcript');
+  });
+
+  it('should filter by minimum file size', () => {
+    // Create files with different sizes
+    const large = createTranscript('project/large.jsonl', 0, '{"type":"summary"}\n'.repeat(50));
+    const small = createTranscript('project/small.jsonl', 0, '{}');
+
+    const config = { ...defaultConfig, minFileSize: 100 };
+    const result = discoverTranscripts(projectsDir, config);
+
+    assert.strictEqual(result.length, 1, 'Should only find file above size threshold');
+    assert.ok(result.includes(large), 'Should include large file');
+    assert.ok(!result.includes(small), 'Should exclude small file');
   });
 
   it('should return empty array if projects directory missing', () => {
     const nonExistentDir = path.join(tempDir, 'does-not-exist');
 
-    const result = discoverTranscripts(nonExistentDir, 7);
+    const result = discoverTranscripts(nonExistentDir, defaultConfig);
 
     assert.deepStrictEqual(result, [], 'Should return empty array for missing directory');
   });
 
   it('should return empty array if no transcripts found', () => {
     // projectsDir exists but is empty (created in beforeEach)
-    const result = discoverTranscripts(projectsDir, 7);
+    const result = discoverTranscripts(projectsDir, defaultConfig);
 
     assert.deepStrictEqual(result, [], 'Should return empty array when no transcripts exist');
   });
@@ -148,7 +197,7 @@ describe('discoverTranscripts', () => {
     const mdFile = path.join(projectsDir, 'project/README.md');
     fs.writeFileSync(mdFile, '# readme');
 
-    const result = discoverTranscripts(projectsDir, 7);
+    const result = discoverTranscripts(projectsDir, defaultConfig);
 
     assert.strictEqual(result.length, 1, 'Should only find .jsonl file');
     assert.strictEqual(result[0], jsonlFile, 'Should return only the .jsonl file');

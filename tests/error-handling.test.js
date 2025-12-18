@@ -23,22 +23,34 @@ const defaultTestConfig = {
   TRANSCRIPT_COUNT: 1,
   LOOKBACK_DAYS: 7,
   TRUNCATE_LINES: 30,
-  MIN_TRANSCRIPT_LINES: 10,
   SKIP_SUBAGENTS: true,
+  DISCOVERY_LIMIT: 1000,
+  MIN_FILE_SIZE: 500,
 };
 
-// Helper to create a JSONL file with enough lines to pass filters
+// Default discovery config for discoverTranscripts calls
+const defaultDiscoveryConfig = {
+  lookbackDays: 7,
+  skipSubagents: false,
+  minFileSize: 0,
+  discoveryLimit: 1000,
+};
+
+// Helper to create a JSONL file with enough content to pass filters
 function createTestTranscript(dir, entries = []) {
   const filename = `test-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`;
   const filePath = path.join(dir, filename);
 
-  // Pad entries to meet minimum line count
+  // Pad entries to meet minimum file size (600 bytes)
   const paddedEntries = [...entries];
-  while (paddedEntries.length < 12) {
-    paddedEntries.push({ type: 'padding', index: paddedEntries.length });
+  let content = paddedEntries.map(e => JSON.stringify(e)).join('\n');
+  let index = paddedEntries.length;
+  while (content.length < 600) {
+    const paddingEntry = JSON.stringify({ type: 'padding', index: index++, data: 'x'.repeat(50) });
+    content += '\n' + paddingEntry;
   }
 
-  fs.writeFileSync(filePath, paddedEntries.map(e => JSON.stringify(e)).join('\n'));
+  fs.writeFileSync(filePath, content);
   return filePath;
 }
 
@@ -85,7 +97,7 @@ describe('error handling', () => {
     it('should return empty array from discoverTranscripts when directory does not exist', () => {
       const nonExistentDir = path.join(tempDir, 'non-existent-projects');
 
-      const result = discoverTranscripts(nonExistentDir, 7);
+      const result = discoverTranscripts(nonExistentDir, defaultDiscoveryConfig);
 
       assert.deepStrictEqual(result, [], 'Should return empty array for missing directory');
     });
@@ -119,7 +131,7 @@ describe('error handling', () => {
   });
 
   describe('EACCES (permission) errors', () => {
-    it('should throw EACCES when reading file without permission', function() {
+    it('should throw EACCES when reading file without permission', function () {
       // Skip on Windows as permission model is different
       if (process.platform === 'win32') {
         this.skip();
@@ -143,7 +155,7 @@ describe('error handling', () => {
       }
     });
 
-    it('should throw EACCES when writing to directory without permission', async function() {
+    it('should throw EACCES when writing to directory without permission', async function () {
       // Skip on Windows as permission model is different
       if (process.platform === 'win32') {
         this.skip();

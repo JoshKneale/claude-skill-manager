@@ -11,35 +11,31 @@ import { loadConfig } from '../scripts/trigger.js';
 describe('loadConfig', () => {
   // Store original env vars to restore after each test
   let originalEnv;
+  const envKeys = [
+    'SKILL_MANAGER_COUNT',
+    'SKILL_MANAGER_LOOKBACK_DAYS',
+    'SKILL_MANAGER_TRUNCATE_LINES',
+    'SKILL_MANAGER_SKIP_SUBAGENTS',
+    'SKILL_MANAGER_DISCOVERY_LIMIT',
+    'SKILL_MANAGER_MIN_FILE_SIZE',
+  ];
 
   beforeEach(() => {
-    originalEnv = {
-      SKILL_MANAGER_COUNT: process.env.SKILL_MANAGER_COUNT,
-      SKILL_MANAGER_LOOKBACK_DAYS: process.env.SKILL_MANAGER_LOOKBACK_DAYS,
-      SKILL_MANAGER_TRUNCATE_LINES: process.env.SKILL_MANAGER_TRUNCATE_LINES,
-    };
-    // Clear env vars before each test
-    delete process.env.SKILL_MANAGER_COUNT;
-    delete process.env.SKILL_MANAGER_LOOKBACK_DAYS;
-    delete process.env.SKILL_MANAGER_TRUNCATE_LINES;
+    originalEnv = {};
+    for (const key of envKeys) {
+      originalEnv[key] = process.env[key];
+      delete process.env[key];
+    }
   });
 
   afterEach(() => {
     // Restore original env vars
-    if (originalEnv.SKILL_MANAGER_COUNT !== undefined) {
-      process.env.SKILL_MANAGER_COUNT = originalEnv.SKILL_MANAGER_COUNT;
-    } else {
-      delete process.env.SKILL_MANAGER_COUNT;
-    }
-    if (originalEnv.SKILL_MANAGER_LOOKBACK_DAYS !== undefined) {
-      process.env.SKILL_MANAGER_LOOKBACK_DAYS = originalEnv.SKILL_MANAGER_LOOKBACK_DAYS;
-    } else {
-      delete process.env.SKILL_MANAGER_LOOKBACK_DAYS;
-    }
-    if (originalEnv.SKILL_MANAGER_TRUNCATE_LINES !== undefined) {
-      process.env.SKILL_MANAGER_TRUNCATE_LINES = originalEnv.SKILL_MANAGER_TRUNCATE_LINES;
-    } else {
-      delete process.env.SKILL_MANAGER_TRUNCATE_LINES;
+    for (const key of envKeys) {
+      if (originalEnv[key] !== undefined) {
+        process.env[key] = originalEnv[key];
+      } else {
+        delete process.env[key];
+      }
     }
   });
 
@@ -74,5 +70,38 @@ describe('loadConfig', () => {
     process.env.SKILL_MANAGER_TRUNCATE_LINES = '50';
     const config = loadConfig();
     assert.strictEqual(config.TRUNCATE_LINES, 50);
+  });
+
+  it('should use default SKIP_SUBAGENTS of true when env var not set', () => {
+    const config = loadConfig();
+    assert.strictEqual(config.SKIP_SUBAGENTS, true);
+  });
+
+  it('should set SKIP_SUBAGENTS to false when env var is "0"', () => {
+    process.env.SKILL_MANAGER_SKIP_SUBAGENTS = '0';
+    const config = loadConfig();
+    assert.strictEqual(config.SKIP_SUBAGENTS, false);
+  });
+
+  it('should use default DISCOVERY_LIMIT of 1000 when env var not set', () => {
+    const config = loadConfig();
+    assert.strictEqual(config.DISCOVERY_LIMIT, 1000);
+  });
+
+  it('should override DISCOVERY_LIMIT from env var', () => {
+    process.env.SKILL_MANAGER_DISCOVERY_LIMIT = '500';
+    const config = loadConfig();
+    assert.strictEqual(config.DISCOVERY_LIMIT, 500);
+  });
+
+  it('should use default MIN_FILE_SIZE of 500 when env var not set', () => {
+    const config = loadConfig();
+    assert.strictEqual(config.MIN_FILE_SIZE, 500);
+  });
+
+  it('should override MIN_FILE_SIZE from env var', () => {
+    process.env.SKILL_MANAGER_MIN_FILE_SIZE = '1000';
+    const config = loadConfig();
+    assert.strictEqual(config.MIN_FILE_SIZE, 1000);
   });
 });

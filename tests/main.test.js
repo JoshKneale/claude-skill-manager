@@ -18,18 +18,22 @@ function createTempDir() {
 }
 
 // Helper to create a temp JSONL file with given entries
-// Pads with dummy entries to ensure file passes MIN_TRANSCRIPT_LINES filter
+// Pads with dummy entries to ensure file passes MIN_FILE_SIZE filter
 function createTempJsonl(dir, entries, options = {}) {
-  const { minLines = 12 } = options;
+  const { minSize = 600 } = options;
   const tmpFile = path.join(dir, `test-transcript-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`);
 
-  // Pad entries to meet minimum line count
+  // Pad entries to meet minimum file size
   const paddedEntries = [...entries];
-  while (paddedEntries.length < minLines) {
-    paddedEntries.push({ type: 'padding', index: paddedEntries.length });
+  let content = paddedEntries.map((e) => JSON.stringify(e)).join('\n');
+
+  // Add padding entries until we reach minimum size
+  let index = paddedEntries.length;
+  while (content.length < minSize) {
+    const paddingEntry = JSON.stringify({ type: 'padding', index: index++, data: 'x'.repeat(50) });
+    content += '\n' + paddingEntry;
   }
 
-  const content = paddedEntries.map((e) => JSON.stringify(e)).join('\n');
   fs.writeFileSync(tmpFile, content);
   return tmpFile;
 }
@@ -39,8 +43,9 @@ const defaultTestConfig = {
   TRANSCRIPT_COUNT: 1,
   LOOKBACK_DAYS: 7,
   TRUNCATE_LINES: 30,
-  MIN_TRANSCRIPT_LINES: 10,
   SKIP_SUBAGENTS: true,
+  DISCOVERY_LIMIT: 1000,
+  MIN_FILE_SIZE: 500,
 };
 
 // Helper to create initial state

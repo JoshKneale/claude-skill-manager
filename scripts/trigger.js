@@ -12,15 +12,16 @@ import { spawn } from 'node:child_process';
 
 /**
  * Load configuration from environment variables with defaults
- * @returns {{ TRANSCRIPT_COUNT: number, LOOKBACK_DAYS: number, TRUNCATE_LINES: number, MIN_TRANSCRIPT_LINES: number, SKIP_SUBAGENTS: boolean }}
+ * @returns {{ TRANSCRIPT_COUNT: number, LOOKBACK_DAYS: number, TRUNCATE_LINES: number, SKIP_SUBAGENTS: boolean, DISCOVERY_LIMIT: number, MIN_FILE_SIZE: number }}
  */
 export function loadConfig() {
   return {
     TRANSCRIPT_COUNT: parseInt(process.env.SKILL_MANAGER_COUNT, 10) || 1,
     LOOKBACK_DAYS: parseInt(process.env.SKILL_MANAGER_LOOKBACK_DAYS, 10) || 7,
     TRUNCATE_LINES: parseInt(process.env.SKILL_MANAGER_TRUNCATE_LINES, 10) || 30,
-    MIN_TRANSCRIPT_LINES: parseInt(process.env.SKILL_MANAGER_MIN_LINES, 10) || 10,
     SKIP_SUBAGENTS: process.env.SKILL_MANAGER_SKIP_SUBAGENTS !== '0', // default: true
+    DISCOVERY_LIMIT: parseInt(process.env.SKILL_MANAGER_DISCOVERY_LIMIT, 10) || 1000,
+    MIN_FILE_SIZE: parseInt(process.env.SKILL_MANAGER_MIN_FILE_SIZE, 10) || 2000,
   };
 }
 
@@ -309,9 +310,10 @@ export function getMtime(filePath) {
  * Recursively find all .jsonl files in a directory
  * @param {string} dir - Directory to search
  * @param {string[]} results - Accumulator for results
+ * @param {boolean} skipSubagents - Skip files starting with 'agent-'
  * @returns {string[]} - Array of file paths
  */
-function findJsonlFiles(dir, results = []) {
+function findJsonlFiles(dir, results = [], skipSubagents = false) {
   let entries;
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -323,8 +325,11 @@ function findJsonlFiles(dir, results = []) {
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      findJsonlFiles(fullPath, results);
+      findJsonlFiles(fullPath, results, skipSubagents);
     } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+      if (skipSubagents && entry.name.startsWith('agent-')) {
+        continue;
+      }
       results.push(fullPath);
     }
   }
@@ -334,14 +339,16 @@ function findJsonlFiles(dir, results = []) {
 
 /**
  * Discover recent transcript files from projects directory
- * Equivalent to: find "$PROJECTS_DIR" -name "*.jsonl" -mtime -$LOOKBACK_DAYS -type f
+ * Filters by: modification time, file size, and optionally skips agent files
  * @param {string} projectsDir - Path to projects directory
- * @param {number} lookbackDays - Only include transcripts modified within N days
- * @returns {string[]} - Array of transcript paths, sorted by mtime descending, limited to 50
+ * @param {{ lookbackDays: number, skipSubagents: boolean, minFileSize: number, discoveryLimit: number }} config - Discovery config
+ * @returns {string[]} - Array of transcript paths, sorted by mtime descending
  */
-export function discoverTranscripts(projectsDir, lookbackDays) {
-  // Find all .jsonl files recursively
-  const allFiles = findJsonlFiles(projectsDir);
+export function discoverTranscripts(projectsDir, config) {
+  const { lookbackDays, skipSubagents, minFileSize, discoveryLimit } = config;
+
+  // Find all .jsonl files recursively (optionally skipping agent-* files)
+  const allFiles = findJsonlFiles(projectsDir, [], skipSubagents);
 
   if (allFiles.length === 0) {
     return [];
@@ -350,12 +357,12 @@ export function discoverTranscripts(projectsDir, lookbackDays) {
   // Calculate cutoff time
   const cutoffMs = Date.now() - lookbackDays * 24 * 60 * 60 * 1000;
 
-  // Get mtime for each file and filter by lookback window
+  // Get mtime for each file and filter by lookback window and size
   const filesWithMtime = [];
   for (const filePath of allFiles) {
     try {
       const stat = fs.statSync(filePath);
-      if (stat.mtimeMs >= cutoffMs) {
+      if (stat.mtimeMs >= cutoffMs && stat.size >= minFileSize) {
         filesWithMtime.push({ path: filePath, mtimeMs: stat.mtimeMs });
       }
     } catch (err) {
@@ -366,8 +373,8 @@ export function discoverTranscripts(projectsDir, lookbackDays) {
   // Sort by mtime descending (newest first)
   filesWithMtime.sort((a, b) => b.mtimeMs - a.mtimeMs);
 
-  // Limit to 50 and return just the paths
-  return filesWithMtime.slice(0, 50).map((f) => f.path);
+  // Limit and return just the paths
+  return filesWithMtime.slice(0, discoveryLimit).map((f) => f.path);
 }
 
 // =============================================================================
@@ -402,46 +409,15 @@ export function isSkillManagerSession(transcriptPath) {
 }
 
 /**
- * Check if a transcript is too short to be worth analyzing
- * Counts non-empty lines in the JSONL file
- * @param {string} transcriptPath - Path to the transcript file
- * @param {number} minLines - Minimum number of lines required (default: 10)
- * @returns {boolean} - true if transcript is too short, false otherwise
- */
-export function isMinimalTranscript(transcriptPath, minLines = 10) {
-  try {
-    const content = fs.readFileSync(transcriptPath, 'utf8');
-    const lineCount = content.split('\n').filter(line => line.trim()).length;
-    return lineCount < minLines;
-  } catch (err) {
-    // If we can't read the file, don't skip it (let later stages handle the error)
-    return false;
-  }
-}
-
-/**
- * Check if a transcript is a sub-agent session (spawned by Task tool)
- * Sub-agents have filenames starting with "agent-"
- * @param {string} transcriptPath - Path to the transcript file
- * @returns {boolean} - true if this is a sub-agent session, false otherwise
- */
-export function isSubagentSession(transcriptPath) {
-  const filename = path.basename(transcriptPath);
-  return filename.startsWith('agent-');
-}
-
-/**
  * Filter transcripts to only those not already in state file
- * Also skips skill-manager's own sessions, minimal transcripts, and optionally sub-agents
- * Equivalent to: checking if jq -e --arg path "$transcript" '.transcripts[$path]' returns false
+ * Also skips skill-manager's own sessions
+ * Note: Subagent and minimal transcript filtering is now done at discovery time
  * @param {string[]} transcripts - Array of transcript paths to filter
  * @param {{ version: number, transcripts: Object }} state - State object with transcripts map
  * @param {number} limit - Maximum number of unanalyzed transcripts to return
- * @param {{ minLines?: number, skipSubagents?: boolean }} [options] - Filter options
  * @returns {string[]} - Array of unanalyzed transcript paths, limited to `limit`
  */
-export function filterUnanalyzed(transcripts, state, limit, options = {}) {
-  const { minLines = 10, skipSubagents = true } = options;
+export function filterUnanalyzed(transcripts, state, limit) {
   const result = [];
 
   for (const transcript of transcripts) {
@@ -449,14 +425,6 @@ export function filterUnanalyzed(transcripts, state, limit, options = {}) {
     if (!(transcript in state.transcripts)) {
       // Skip skill-manager's own sessions
       if (isSkillManagerSession(transcript)) {
-        continue;
-      }
-      // Skip sub-agent sessions if configured
-      if (skipSubagents && isSubagentSession(transcript)) {
-        continue;
-      }
-      // Skip transcripts that are too short
-      if (isMinimalTranscript(transcript, minLines)) {
         continue;
       }
       result.push(transcript);
@@ -891,8 +859,13 @@ export async function main({ stateDir, projectsDir, log, runAnalysis, config, st
   const stateFile = path.join(stateDir, 'analyzed.json');
   initStateFile(stateFile);
 
-  // 4. Discover transcripts
-  const transcripts = discoverTranscripts(projectsDir, config.LOOKBACK_DAYS);
+  // 4. Discover transcripts (filters by mtime, size, and optionally skips agents)
+  const transcripts = discoverTranscripts(projectsDir, {
+    lookbackDays: config.LOOKBACK_DAYS,
+    skipSubagents: config.SKIP_SUBAGENTS,
+    minFileSize: config.MIN_FILE_SIZE,
+    discoveryLimit: config.DISCOVERY_LIMIT,
+  });
 
   if (transcripts.length === 0) {
     log('No transcripts found in projects directory');
@@ -901,10 +874,7 @@ export async function main({ stateDir, projectsDir, log, runAnalysis, config, st
 
   // 5. Read state and filter to unanalyzed transcripts
   const state = readStateFile(stateFile);
-  const unanalyzed = filterUnanalyzed(transcripts, state, config.TRANSCRIPT_COUNT, {
-    minLines: config.MIN_TRANSCRIPT_LINES,
-    skipSubagents: config.SKIP_SUBAGENTS,
-  });
+  const unanalyzed = filterUnanalyzed(transcripts, state, config.TRANSCRIPT_COUNT);
 
   if (unanalyzed.length === 0) {
     log('All transcripts already analyzed');
