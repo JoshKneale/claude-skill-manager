@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 
-import { parseHookInput, isSubagent, countLines } from '../scripts/trigger.js';
+import { parseHookInput, isSubagent, isSkillManagerSession, countLines } from '../scripts/trigger.js';
 
 // Helper to create a mock stdin stream with data
 function createMockStdin(data) {
@@ -98,6 +98,91 @@ describe('isSubagent', () => {
   it('should return false for files with agent in the path but not filename', () => {
     assert.strictEqual(isSubagent('/path/agent/to/transcript.jsonl'), false);
     assert.strictEqual(isSubagent('/agent-folder/transcript.jsonl'), false);
+  });
+});
+
+describe('isSkillManagerSession', () => {
+  let testDir;
+
+  beforeEach(() => {
+    testDir = createTempDir();
+  });
+
+  afterEach(() => {
+    if (testDir && fs.existsSync(testDir)) {
+      fs.rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it('should return true for transcript with skill extraction prompt', () => {
+    const filePath = path.join(testDir, 'transcript.jsonl');
+    const content = [
+      JSON.stringify({ type: 'summary', summary: 'Session started' }),
+      JSON.stringify({ type: 'user', message: { content: 'Extract skills from transcript at: /path/to/other.jsonl' } }),
+      JSON.stringify({ type: 'assistant', message: { content: 'Analyzing transcript...' } }),
+    ].join('\n');
+    fs.writeFileSync(filePath, content);
+
+    assert.strictEqual(isSkillManagerSession(filePath), true);
+  });
+
+  it('should return true when prompt is in content array', () => {
+    const filePath = path.join(testDir, 'transcript.jsonl');
+    const content = [
+      JSON.stringify({ type: 'user', message: { content: [{ type: 'text', text: 'Extract skills from transcript at: /path/to/other.jsonl' }] } }),
+    ].join('\n');
+    fs.writeFileSync(filePath, content);
+
+    assert.strictEqual(isSkillManagerSession(filePath), true);
+  });
+
+  it('should return false for regular user sessions', () => {
+    const filePath = path.join(testDir, 'transcript.jsonl');
+    const content = [
+      JSON.stringify({ type: 'summary', summary: 'Session started' }),
+      JSON.stringify({ type: 'user', message: { content: 'Help me fix a bug in my code' } }),
+      JSON.stringify({ type: 'assistant', message: { content: 'I can help with that...' } }),
+    ].join('\n');
+    fs.writeFileSync(filePath, content);
+
+    assert.strictEqual(isSkillManagerSession(filePath), false);
+  });
+
+  it('should return false for non-existent file', () => {
+    assert.strictEqual(isSkillManagerSession('/nonexistent/file.jsonl'), false);
+  });
+
+  it('should return false for empty file', () => {
+    const filePath = path.join(testDir, 'empty.jsonl');
+    fs.writeFileSync(filePath, '');
+
+    assert.strictEqual(isSkillManagerSession(filePath), false);
+  });
+
+  it('should return false if skill prompt appears after first 10 lines', () => {
+    const filePath = path.join(testDir, 'transcript.jsonl');
+    const lines = [];
+    // Add 15 normal lines first
+    for (let i = 0; i < 15; i++) {
+      lines.push(JSON.stringify({ type: 'assistant', message: { content: `Line ${i}` } }));
+    }
+    // Then add the skill manager prompt
+    lines.push(JSON.stringify({ type: 'user', message: { content: 'Extract skills from transcript at: /path' } }));
+    fs.writeFileSync(filePath, lines.join('\n'));
+
+    assert.strictEqual(isSkillManagerSession(filePath), false);
+  });
+
+  it('should handle malformed JSON lines gracefully', () => {
+    const filePath = path.join(testDir, 'transcript.jsonl');
+    const content = [
+      'not valid json',
+      '{ broken json',
+      JSON.stringify({ type: 'user', message: { content: 'Normal message' } }),
+    ].join('\n');
+    fs.writeFileSync(filePath, content);
+
+    assert.strictEqual(isSkillManagerSession(filePath), false);
   });
 });
 

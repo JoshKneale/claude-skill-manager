@@ -241,6 +241,40 @@ export function isSubagent(transcriptPath) {
 }
 
 /**
+ * Check if a transcript is from a skill-manager session (should be skipped to prevent infinite loops)
+ * Looks for the skill extraction prompt in the first few entries of the transcript
+ * @param {string} transcriptPath - Path to the transcript file
+ * @returns {boolean} - true if this is a skill-manager session
+ */
+export function isSkillManagerSession(transcriptPath) {
+  try {
+    const content = fs.readFileSync(transcriptPath, 'utf8');
+    // Check first few lines for the skill-manager prompt pattern
+    const lines = content.split('\n').slice(0, 10);
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const entry = JSON.parse(line);
+        // Check if user message contains skill extraction prompt
+        if (entry.type === 'user' && entry.message?.content) {
+          const contentStr = typeof entry.message.content === 'string'
+            ? entry.message.content
+            : JSON.stringify(entry.message.content);
+          if (contentStr.includes('Extract skills from transcript')) {
+            return true;
+          }
+        }
+      } catch {
+        // Skip malformed lines
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Count the number of lines in a file
  * @param {string} filePath - Path to the file
  * @returns {number} - Number of lines, or 0 if file can't be read
@@ -628,6 +662,12 @@ export async function main({ transcriptPath: rawTranscriptPath, log, config, sta
   // Check if this is a subagent session
   if (isSubagent(transcriptPath)) {
     log(`Skipped (subagent): ${transcriptPath}`);
+    return 0;
+  }
+
+  // Check if this is a skill-manager session (prevent infinite loops)
+  if (isSkillManagerSession(transcriptPath)) {
+    log(`Skipped (skill-manager session): ${transcriptPath}`);
     return 0;
   }
 
