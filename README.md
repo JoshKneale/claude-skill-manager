@@ -28,6 +28,9 @@ git clone https://github.com/joshkneale/claude-skill-manager.git
 
 # Install the plugin
 /plugin install skill-manager@skill-manager-marketplace
+
+# Test with a transcript (note: env var must be on the node command, not echo)
+echo '{"transcript_path": "/path/to/transcript.jsonl"}' | SKILL_MANAGER_SAVE_OUTPUT=1 node scripts/trigger.js
 ```
 
 ## How It Works
