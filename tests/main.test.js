@@ -18,12 +18,30 @@ function createTempDir() {
 }
 
 // Helper to create a temp JSONL file with given entries
-function createTempJsonl(dir, entries) {
+// Pads with dummy entries to ensure file passes MIN_TRANSCRIPT_LINES filter
+function createTempJsonl(dir, entries, options = {}) {
+  const { minLines = 12 } = options;
   const tmpFile = path.join(dir, `test-transcript-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`);
-  const content = entries.map((e) => JSON.stringify(e)).join('\n');
+
+  // Pad entries to meet minimum line count
+  const paddedEntries = [...entries];
+  while (paddedEntries.length < minLines) {
+    paddedEntries.push({ type: 'padding', index: paddedEntries.length });
+  }
+
+  const content = paddedEntries.map((e) => JSON.stringify(e)).join('\n');
   fs.writeFileSync(tmpFile, content);
   return tmpFile;
 }
+
+// Default config for tests (includes all required options)
+const defaultTestConfig = {
+  TRANSCRIPT_COUNT: 1,
+  LOOKBACK_DAYS: 7,
+  TRUNCATE_LINES: 30,
+  MIN_TRANSCRIPT_LINES: 10,
+  SKIP_SUBAGENTS: true,
+};
 
 // Helper to create initial state
 function createInitialState() {
@@ -79,7 +97,7 @@ describe('main', () => {
         projectsDir,
         log: mockLog,
         runAnalysis: mock.fn(() => ({ exitCode: 0 })),
-        config: { TRANSCRIPT_COUNT: 1, LOOKBACK_DAYS: 7, TRUNCATE_LINES: 30 },
+        config: defaultTestConfig,
       });
 
       // State dir should now exist
@@ -106,7 +124,7 @@ describe('main', () => {
         projectsDir,
         log: mockLog,
         runAnalysis: mock.fn(() => ({ exitCode: 0 })),
-        config: { TRANSCRIPT_COUNT: 1, LOOKBACK_DAYS: 7, TRUNCATE_LINES: 30 },
+        config: defaultTestConfig,
       });
 
       // Old log should be cleaned up
@@ -128,7 +146,7 @@ describe('main', () => {
         projectsDir,
         log: mockLog,
         runAnalysis: mock.fn(() => ({ exitCode: 0 })),
-        config: { TRANSCRIPT_COUNT: 1, LOOKBACK_DAYS: 7, TRUNCATE_LINES: 30 },
+        config: defaultTestConfig,
       });
 
       // State file should exist and be valid JSON
@@ -151,7 +169,7 @@ describe('main', () => {
         projectsDir,
         log: mockLog,
         runAnalysis: mock.fn(() => ({ exitCode: 0 })),
-        config: { TRANSCRIPT_COUNT: 1, LOOKBACK_DAYS: 7, TRUNCATE_LINES: 30 },
+        config: defaultTestConfig,
       });
 
       // Should exit gracefully (return 0 or undefined, not throw)
@@ -175,7 +193,7 @@ describe('main', () => {
         projectsDir,
         log: mockLog,
         runAnalysis: mock.fn(() => ({ exitCode: 0 })),
-        config: { TRANSCRIPT_COUNT: 1, LOOKBACK_DAYS: 7, TRUNCATE_LINES: 30 },
+        config: defaultTestConfig,
       });
 
       // Should exit gracefully
@@ -207,7 +225,7 @@ describe('main', () => {
         projectsDir,
         log: mockLog,
         runAnalysis: mockRunAnalysis,
-        config: { TRANSCRIPT_COUNT: 1, LOOKBACK_DAYS: 7, TRUNCATE_LINES: 30 },
+        config: defaultTestConfig,
       });
 
       // Should exit gracefully without processing
@@ -238,7 +256,7 @@ describe('main', () => {
         projectsDir,
         log: mockLog,
         runAnalysis: mockRunAnalysis,
-        config: { TRANSCRIPT_COUNT: 1, LOOKBACK_DAYS: 7, TRUNCATE_LINES: 30 },
+        config: defaultTestConfig,
       });
 
       // Should exit gracefully
@@ -267,7 +285,7 @@ describe('main', () => {
         projectsDir,
         log: mockLog,
         runAnalysis: mock.fn(() => ({ exitCode: 0 })),
-        config: { TRANSCRIPT_COUNT: 1, LOOKBACK_DAYS: 7, TRUNCATE_LINES: 30 },
+        config: defaultTestConfig,
       });
 
       // Lock should be released (lock directory should not exist)
@@ -295,7 +313,7 @@ describe('main', () => {
           projectsDir,
           log: mockLog,
           runAnalysis: throwingRunAnalysis,
-          config: { TRANSCRIPT_COUNT: 1, LOOKBACK_DAYS: 7, TRUNCATE_LINES: 30 },
+          config: defaultTestConfig,
         });
       } catch (err) {
         // It's okay if it throws, but lock should still be released
@@ -328,7 +346,7 @@ describe('main', () => {
         projectsDir,
         log: mockLog,
         runAnalysis: mockRunAnalysis,
-        config: { TRANSCRIPT_COUNT: 2, LOOKBACK_DAYS: 7, TRUNCATE_LINES: 30 },
+        config: { ...defaultTestConfig, TRANSCRIPT_COUNT: 2 },
       });
 
       // Should have processed exactly 2 transcripts
@@ -361,7 +379,7 @@ describe('main', () => {
         projectsDir,
         log: mockLog,
         runAnalysis: mockRunAnalysis,
-        config: { TRANSCRIPT_COUNT: 2, LOOKBACK_DAYS: 7, TRUNCATE_LINES: 30 },
+        config: { ...defaultTestConfig, TRANSCRIPT_COUNT: 2 },
       });
 
       // Verify both were processed
@@ -409,7 +427,7 @@ describe('main', () => {
         projectsDir,
         log: mockLog,
         runAnalysis: mock.fn(() => ({ exitCode: 0 })),
-        config: { TRANSCRIPT_COUNT: 1, LOOKBACK_DAYS: 7, TRUNCATE_LINES: 30 },
+        config: defaultTestConfig,
         stdin: mockStdin,
       });
 

@@ -3,7 +3,7 @@
  * Run with: npm test
  *
  * These tests verify that runAnalysis:
- * 1. Spawns claude with correct arguments (--model sonnet, --print, /skill-manager <path>)
+ * 1. Spawns claude with correct arguments (--model sonnet, -p, --system-prompt-file)
  * 2. Returns { exitCode: number }
  * 3. Handles debug mode (captures output to log) vs normal mode (discards output)
  */
@@ -82,7 +82,7 @@ describe('runAnalysis', () => {
     assert.strictEqual(spawnedArgs.args[modelIndex + 1], 'sonnet', '--model should be followed by sonnet');
   });
 
-  it('should call claude with --print flag', async () => {
+  it('should call claude with -p flag and transcript path in prompt', async () => {
     const { runAnalysis } = await import('../scripts/trigger.js');
 
     let spawnedArgs = null;
@@ -103,10 +103,15 @@ describe('runAnalysis', () => {
     await runAnalysis(transcriptPath, { logFile, spawner: mockSpawner });
 
     assert.ok(spawnedArgs, 'spawner should have been called');
-    assert.ok(spawnedArgs.args.includes('--print'), 'args should include --print');
+    assert.ok(spawnedArgs.args.includes('-p'), 'args should include -p flag');
+
+    // The prompt should include the transcript path
+    const pIndex = spawnedArgs.args.indexOf('-p');
+    const promptArg = spawnedArgs.args[pIndex + 1];
+    assert.ok(promptArg.includes(transcriptPath), 'prompt should include transcript path');
   });
 
-  it('should call claude with /skill-manager command and transcript path', async () => {
+  it('should call claude with --system-prompt-file flag', async () => {
     const { runAnalysis } = await import('../scripts/trigger.js');
 
     let spawnedArgs = null;
@@ -127,11 +132,12 @@ describe('runAnalysis', () => {
     await runAnalysis(transcriptPath, { logFile, spawner: mockSpawner });
 
     assert.ok(spawnedArgs, 'spawner should have been called');
+    assert.ok(spawnedArgs.args.includes('--system-prompt-file'), 'args should include --system-prompt-file');
 
-    // The last argument should be the prompt: "/skill-manager <path>"
-    const promptArg = spawnedArgs.args.find(arg => arg.startsWith('/skill-manager'));
-    assert.ok(promptArg, 'args should include /skill-manager command');
-    assert.ok(promptArg.includes(transcriptPath), 'command should include transcript path');
+    // The system-prompt-file should point to skill-manager.md
+    const sysPromptIndex = spawnedArgs.args.indexOf('--system-prompt-file');
+    const sysPromptFile = spawnedArgs.args[sysPromptIndex + 1];
+    assert.ok(sysPromptFile.includes('skill-manager.md'), 'system-prompt-file should be skill-manager.md');
   });
 
   it('should return exit code 0 on success', async () => {

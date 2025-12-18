@@ -18,6 +18,30 @@ import {
   releaseLock,
 } from '../scripts/trigger.js';
 
+// Default config for tests (includes all required options)
+const defaultTestConfig = {
+  TRANSCRIPT_COUNT: 1,
+  LOOKBACK_DAYS: 7,
+  TRUNCATE_LINES: 30,
+  MIN_TRANSCRIPT_LINES: 10,
+  SKIP_SUBAGENTS: true,
+};
+
+// Helper to create a JSONL file with enough lines to pass filters
+function createTestTranscript(dir, entries = []) {
+  const filename = `test-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`;
+  const filePath = path.join(dir, filename);
+
+  // Pad entries to meet minimum line count
+  const paddedEntries = [...entries];
+  while (paddedEntries.length < 12) {
+    paddedEntries.push({ type: 'padding', index: paddedEntries.length });
+  }
+
+  fs.writeFileSync(filePath, paddedEntries.map(e => JSON.stringify(e)).join('\n'));
+  return filePath;
+}
+
 describe('error handling', () => {
   let tempDir;
   let stateDir;
@@ -163,11 +187,10 @@ describe('error handling', () => {
       const stateFile = path.join(stateDir, 'analyzed.json');
       fs.writeFileSync(stateFile, 'corrupted {{{ json');
 
-      // Create a transcript to process
+      // Create a transcript to process (with enough lines to pass filter)
       const transcriptDir = path.join(projectsDir, 'project1');
       fs.mkdirSync(transcriptDir, { recursive: true });
-      const transcriptFile = path.join(transcriptDir, 'session.jsonl');
-      fs.writeFileSync(transcriptFile, '{"type":"summary","message":{"content":"test"}}');
+      createTestTranscript(transcriptDir, [{ type: 'summary', message: { content: 'test' } }]);
 
       const logs = [];
       const logFn = (msg) => logs.push(msg);
@@ -178,7 +201,7 @@ describe('error handling', () => {
         projectsDir,
         log: logFn,
         runAnalysis: async () => ({ exitCode: 0 }),
-        config: { TRANSCRIPT_COUNT: 1, LOOKBACK_DAYS: 7, TRUNCATE_LINES: 30 },
+        config: defaultTestConfig,
       });
 
       // Should have recovered and processed successfully
@@ -248,11 +271,10 @@ describe('error handling', () => {
 
   describe('unexpected errors and crash prevention', () => {
     it('should release lock even when runAnalysis throws', async () => {
-      // Create valid transcript
+      // Create valid transcript (with enough lines to pass filter)
       const transcriptDir = path.join(projectsDir, 'project1');
       fs.mkdirSync(transcriptDir, { recursive: true });
-      const transcriptFile = path.join(transcriptDir, 'session.jsonl');
-      fs.writeFileSync(transcriptFile, '{"type":"summary","message":{"content":"test"}}');
+      createTestTranscript(transcriptDir, [{ type: 'summary', message: { content: 'test' } }]);
 
       const logs = [];
       const logFn = (msg) => logs.push(msg);
@@ -269,7 +291,7 @@ describe('error handling', () => {
           projectsDir,
           log: logFn,
           runAnalysis: throwingAnalysis,
-          config: { TRANSCRIPT_COUNT: 1, LOOKBACK_DAYS: 7, TRUNCATE_LINES: 30 },
+          config: defaultTestConfig,
         }),
         { message: 'Simulated analysis failure' },
         'Should propagate the error'
@@ -285,13 +307,11 @@ describe('error handling', () => {
     });
 
     it('should continue processing remaining transcripts after one fails with non-zero exit', async () => {
-      // Create two transcripts
+      // Create two transcripts (with enough lines to pass filter)
       const transcriptDir = path.join(projectsDir, 'project1');
       fs.mkdirSync(transcriptDir, { recursive: true });
-      const transcript1 = path.join(transcriptDir, 'session1.jsonl');
-      const transcript2 = path.join(transcriptDir, 'session2.jsonl');
-      fs.writeFileSync(transcript1, '{"type":"summary","message":{"content":"test1"}}');
-      fs.writeFileSync(transcript2, '{"type":"summary","message":{"content":"test2"}}');
+      createTestTranscript(transcriptDir, [{ type: 'summary', message: { content: 'test1' } }]);
+      createTestTranscript(transcriptDir, [{ type: 'summary', message: { content: 'test2' } }]);
 
       const logs = [];
       const logFn = (msg) => logs.push(msg);
@@ -308,7 +328,7 @@ describe('error handling', () => {
         projectsDir,
         log: logFn,
         runAnalysis: mixedAnalysis,
-        config: { TRANSCRIPT_COUNT: 2, LOOKBACK_DAYS: 7, TRUNCATE_LINES: 30 },
+        config: { ...defaultTestConfig, TRANSCRIPT_COUNT: 2 },
       });
 
       // Should process both transcripts
@@ -319,11 +339,10 @@ describe('error handling', () => {
 
   describe('error logging', () => {
     it('should log when a transcript fails with non-zero exit code', async () => {
-      // Create a transcript
+      // Create a transcript (with enough lines to pass filter)
       const transcriptDir = path.join(projectsDir, 'project1');
       fs.mkdirSync(transcriptDir, { recursive: true });
-      const transcriptFile = path.join(transcriptDir, 'session.jsonl');
-      fs.writeFileSync(transcriptFile, '{"type":"summary","message":{"content":"test"}}');
+      createTestTranscript(transcriptDir, [{ type: 'summary', message: { content: 'test' } }]);
 
       const logs = [];
       const logFn = (msg) => logs.push(msg);
@@ -335,7 +354,7 @@ describe('error handling', () => {
         projectsDir,
         log: logFn,
         runAnalysis: failingAnalysis,
-        config: { TRANSCRIPT_COUNT: 1, LOOKBACK_DAYS: 7, TRUNCATE_LINES: 30 },
+        config: defaultTestConfig,
       });
 
       // Should have logged the failure
