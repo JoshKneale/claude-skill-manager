@@ -16,11 +16,6 @@ describe('buildPaths', () => {
     assert.strictEqual(paths.STATE_DIR, `${homeDir}/.claude/skill-manager`);
   });
 
-  it('should construct STATE_FILE as $STATE_DIR/analyzed.json', () => {
-    const paths = buildPaths();
-    assert.strictEqual(paths.STATE_FILE, `${homeDir}/.claude/skill-manager/analyzed.json`);
-  });
-
   it('should construct LOG_FILE with current date YYYY-MM-DD', () => {
     const paths = buildPaths();
     // Get current date in YYYY-MM-DD format
@@ -28,13 +23,18 @@ describe('buildPaths', () => {
     assert.strictEqual(paths.LOG_FILE, `${homeDir}/.claude/skill-manager/skill-manager-${today}.log`);
   });
 
-  it('should construct PROJECTS_DIR as $HOME/.claude/projects', () => {
-    const paths = buildPaths();
-    assert.strictEqual(paths.PROJECTS_DIR, `${homeDir}/.claude/projects`);
-  });
-
   it('should construct OUTPUTS_DIR as $STATE_DIR/outputs', () => {
     const paths = buildPaths();
     assert.strictEqual(paths.OUTPUTS_DIR, `${homeDir}/.claude/skill-manager/outputs`);
+  });
+
+  it('should not include STATE_FILE (removed in simplification)', () => {
+    const paths = buildPaths();
+    assert.strictEqual(paths.STATE_FILE, undefined);
+  });
+
+  it('should not include PROJECTS_DIR (removed in simplification)', () => {
+    const paths = buildPaths();
+    assert.strictEqual(paths.PROJECTS_DIR, undefined);
   });
 });

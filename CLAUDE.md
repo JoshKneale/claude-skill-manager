@@ -30,18 +30,16 @@ templates/skill/         # Templates for generated skill files
 
 ## How It Works
 
-1. **SessionEnd hook** triggers `scripts/trigger.js`
-2. Script discovers recent transcripts from `~/.claude/projects/` (last 7 days)
-3. Checks state file (`~/.claude/skill-manager/analyzed.json`) to find unanalyzed transcripts
-4. Processes 1 unanalyzed transcript per session (configurable)
-5. **Preprocesses transcript** to reduce token usage (removes metadata bloat, truncates large tool results)
-6. Runs `claude --print "/skill-manager $preprocessed_path"` in background
-7. The `/skill-manager` command prompt guides Claude to:
+1. **SessionEnd hook** triggers `scripts/trigger.js` with hook input via stdin
+2. Script parses `transcript_path` from the hook input JSON
+3. Applies filters: skips subagent sessions (`agent-*.jsonl`) and short transcripts (< MIN_LINES)
+4. **Preprocesses transcript** to reduce token usage (removes metadata bloat, truncates large tool results)
+5. Spawns detached child process to run Claude analysis in background
+6. The `/skill-manager` command prompt guides Claude to:
    - Read the JSONL transcript
    - Identify failures, corrections, error solutions
    - Check for existing skills to enhance (prefer enhancement over creation)
-   - Write skills to `.claude/skills/<skill-name>/`
-8. Updates state file to track analyzed transcripts (prevents re-analysis)
+   - Write skills to `~/.claude/skills/<skill-name>/`
 
 ## Configuration
 
@@ -49,21 +47,38 @@ Environment variables to customize behavior:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SKILL_MANAGER_COUNT` | `1` | Number of transcripts to analyze per SessionEnd |
-| `SKILL_MANAGER_LOOKBACK_DAYS` | `7` | Only consider transcripts modified within N days |
-| `SKILL_MANAGER_SAVE_OUTPUT` | `0` | Set to `1` to save Claude output to individual files in `outputs/` |
 | `SKILL_MANAGER_TRUNCATE_LINES` | `30` | Lines to keep at start/end of large tool results (reduces tokens) |
 | `SKILL_MANAGER_MIN_LINES` | `10` | Skip transcripts with fewer than N lines (filters warmup sessions) |
-| `SKILL_MANAGER_SKIP_SUBAGENTS` | `1` | Skip sub-agent sessions (Task tool spawned). Set to `0` to include them |
+| `SKILL_MANAGER_SAVE_OUTPUT` | `0` | Set to `1` to save Claude output to individual files in `outputs/` |
 
 ## Testing Changes
 
-```bash
-# Enable output capture for debugging/prompt iteration
-export SKILL_MANAGER_SAVE_OUTPUT=1
+### Local Testing
 
-# Manual extraction on any transcript
-/skill-manager /path/to/transcript.jsonl
+```bash
+# Run unit tests
+npm test
+
+# Manual extraction on a specific transcript (interactive mode)
+node scripts/trigger.js /path/to/transcript.jsonl
+
+# Simulate the SessionEnd hook locally (pipe JSON to stdin)
+# This mimics exactly what Claude Code does when a session ends
+echo '{"transcript_path": "~/.claude/projects/your-project/session-id.jsonl", "session_id": "abc123", "reason": "exit"}' | node scripts/trigger.js
+
+# Find a recent transcript to test with
+ls -lt ~/.claude/projects/*//*.jsonl | head -5
+
+# Full local test with a real transcript
+TRANSCRIPT=$(ls -t ~/.claude/projects/*/*.jsonl 2>/dev/null | head -1)
+echo "{\"transcript_path\": \"$TRANSCRIPT\"}" | node scripts/trigger.js
+```
+
+### Debugging
+
+```bash
+# Enable output capture to see what Claude produces
+export SKILL_MANAGER_SAVE_OUTPUT=1
 
 # Watch today's audit log in real-time
 tail -f ~/.claude/skill-manager/skill-manager-$(date +%Y-%m-%d).log
@@ -71,8 +86,8 @@ tail -f ~/.claude/skill-manager/skill-manager-$(date +%Y-%m-%d).log
 # View saved output files (when SAVE_OUTPUT=1)
 ls -la ~/.claude/skill-manager/outputs/
 
-# Check state file (analyzed transcripts)
-cat ~/.claude/skill-manager/analyzed.json
+# Or use the slash command directly in Claude Code
+/skill-manager /path/to/transcript.jsonl
 ```
 
 ## Local Development Install

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Cross-platform trigger for Skill Manager
+// Simplified version: reads transcript_path directly from SessionEnd hook input
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -12,16 +13,12 @@ import { spawn } from 'node:child_process';
 
 /**
  * Load configuration from environment variables with defaults
- * @returns {{ TRANSCRIPT_COUNT: number, LOOKBACK_DAYS: number, TRUNCATE_LINES: number, SKIP_SUBAGENTS: boolean, DISCOVERY_LIMIT: number, MIN_FILE_SIZE: number, SAVE_OUTPUT: boolean }}
+ * @returns {{ TRUNCATE_LINES: number, MIN_LINES: number, SAVE_OUTPUT: boolean }}
  */
 export function loadConfig() {
   return {
-    TRANSCRIPT_COUNT: parseInt(process.env.SKILL_MANAGER_COUNT, 10) || 1,
-    LOOKBACK_DAYS: parseInt(process.env.SKILL_MANAGER_LOOKBACK_DAYS, 10) || 7,
     TRUNCATE_LINES: parseInt(process.env.SKILL_MANAGER_TRUNCATE_LINES, 10) || 30,
-    SKIP_SUBAGENTS: process.env.SKILL_MANAGER_SKIP_SUBAGENTS !== '0', // default: true
-    DISCOVERY_LIMIT: parseInt(process.env.SKILL_MANAGER_DISCOVERY_LIMIT, 10) || 1000,
-    MIN_FILE_SIZE: parseInt(process.env.SKILL_MANAGER_MIN_FILE_SIZE, 10) || 2000,
+    MIN_LINES: parseInt(process.env.SKILL_MANAGER_MIN_LINES, 10) || 10,
     SAVE_OUTPUT: process.env.SKILL_MANAGER_SAVE_OUTPUT === '1', // default: false
   };
 }
@@ -32,7 +29,7 @@ export function loadConfig() {
 
 /**
  * Build standard paths used by skill manager
- * @returns {{ STATE_DIR: string, STATE_FILE: string, LOG_FILE: string, OUTPUTS_DIR: string, PROJECTS_DIR: string }}
+ * @returns {{ STATE_DIR: string, LOG_FILE: string, OUTPUTS_DIR: string }}
  */
 export function buildPaths() {
   const homeDir = process.env.HOME || process.env.USERPROFILE;
@@ -41,10 +38,8 @@ export function buildPaths() {
 
   return {
     STATE_DIR: stateDir,
-    STATE_FILE: `${stateDir}/analyzed.json`,
     LOG_FILE: `${stateDir}/skill-manager-${today}.log`,
     OUTPUTS_DIR: `${stateDir}/outputs`,
-    PROJECTS_DIR: `${homeDir}/.claude/projects`,
   };
 }
 
@@ -88,164 +83,8 @@ export function log(logFile, ...args) {
 }
 
 // =============================================================================
-// Locking
+// Log Cleanup
 // =============================================================================
-
-/**
- * Acquire lock atomically using directory creation (portable across platforms)
- * Equivalent to: mkdir "$LOCK_DIR" 2>/dev/null && echo $$ > "${LOCK_DIR}/pid"
- * @param {string} stateDir - The state directory path
- * @returns {boolean} - true if lock acquired, false if already held
- */
-export function acquireLock(stateDir) {
-  const lockDir = path.join(stateDir, 'skill-manager.lock.d');
-
-  try {
-    // mkdir without recursive: true will fail if directory exists (atomic)
-    fs.mkdirSync(lockDir);
-    // Write PID to lock directory
-    fs.writeFileSync(path.join(lockDir, 'pid'), String(process.pid));
-    return true;
-  } catch (err) {
-    if (err.code === 'EEXIST') {
-      // Lock already held by another process
-      return false;
-    }
-    throw err;
-  }
-}
-
-/**
- * Release lock by removing the lock directory
- * Equivalent to: rm -rf "$LOCK_DIR"
- * @param {string} stateDir - The state directory path
- */
-export function releaseLock(stateDir) {
-  const lockDir = path.join(stateDir, 'skill-manager.lock.d');
-
-  try {
-    fs.rmSync(lockDir, { recursive: true, force: true });
-  } catch (err) {
-    // Ignore errors - lock may already be released
-  }
-}
-
-// =============================================================================
-// Directory Management
-// =============================================================================
-
-/**
- * Ensure required directories exist (creates recursively if needed)
- * Equivalent to: mkdir -p "$STATE_DIR"
- */
-export function ensureDirectories() {
-  const { STATE_DIR } = buildPaths();
-  fs.mkdirSync(STATE_DIR, { recursive: true });
-}
-
-/**
- * Initialize state file if missing or corrupted
- * Creates {version:1,transcripts:{}} if file doesn't exist or contains invalid JSON
- * Equivalent to:
- *   if [ ! -f "$STATE_FILE" ]; then echo '{"version":1,"transcripts":{}}' > "$STATE_FILE"; fi
- *   if ! jq empty "$STATE_FILE" 2>/dev/null; then echo '{"version":1,"transcripts":{}}' > "$STATE_FILE"; fi
- * @param {string} stateFilePath - Path to the state file
- */
-export function initStateFile(stateFilePath) {
-  const initialState = { version: 1, transcripts: {} };
-
-  // Check if file exists
-  if (!fs.existsSync(stateFilePath)) {
-    fs.writeFileSync(stateFilePath, JSON.stringify(initialState));
-    return;
-  }
-
-  // File exists - validate it's valid JSON
-  try {
-    const content = fs.readFileSync(stateFilePath, 'utf8');
-    JSON.parse(content);
-    // Valid JSON - don't modify
-  } catch (err) {
-    // Invalid JSON or empty file - reinitialize
-    fs.writeFileSync(stateFilePath, JSON.stringify(initialState));
-  }
-}
-
-/**
- * Read and parse state file
- * @param {string} stateFilePath - Path to the state file
- * @returns {{ version: number, transcripts: Object }|null} - Parsed state object, or null if file doesn't exist
- * @throws {SyntaxError} - If file contains invalid JSON
- */
-export function readStateFile(stateFilePath) {
-  try {
-    const content = fs.readFileSync(stateFilePath, 'utf8');
-    return JSON.parse(content);
-  } catch (err) {
-    if (err.code === 'ENOENT') {
-      return null;
-    }
-    throw err;
-  }
-}
-
-/**
- * Validate that a state file exists and has correct structure
- * @param {string} stateFilePath - Path to the state file
- * @returns {boolean} - true if valid, false otherwise
- */
-export function validateStateFile(stateFilePath) {
-  try {
-    const content = fs.readFileSync(stateFilePath, 'utf8');
-    const state = JSON.parse(content);
-
-    // Check version is a number
-    if (typeof state.version !== 'number') {
-      return false;
-    }
-
-    // Check transcripts is a plain object (not null, not array)
-    if (
-      state.transcripts === null ||
-      typeof state.transcripts !== 'object' ||
-      Array.isArray(state.transcripts)
-    ) {
-      return false;
-    }
-
-    return true;
-  } catch (err) {
-    // File doesn't exist, can't be read, or invalid JSON
-    return false;
-  }
-}
-
-/**
- * Write state file atomically using temp file + rename pattern
- * @param {string} stateFilePath - Path to the state file
- * @param {{ version: number, transcripts: Object }} state - State object to write
- */
-export function writeStateFile(stateFilePath, state) {
-  // Ensure parent directory exists
-  const parentDir = path.dirname(stateFilePath);
-  fs.mkdirSync(parentDir, { recursive: true });
-
-  // Write to temp file first (atomic write pattern)
-  const tempFile = `${stateFilePath}.tmp.${process.pid}`;
-  try {
-    fs.writeFileSync(tempFile, JSON.stringify(state));
-    // Atomic rename
-    fs.renameSync(tempFile, stateFilePath);
-  } catch (err) {
-    // Clean up temp file on error
-    try {
-      fs.unlinkSync(tempFile);
-    } catch (cleanupErr) {
-      // Ignore cleanup errors
-    }
-    throw err;
-  }
-}
 
 /**
  * Delete log files older than 7 days from stateDir and outputs subdirectory
@@ -311,99 +150,48 @@ export function cleanupOldLogs(stateDir) {
 }
 
 // =============================================================================
-// File Modification Time
+// Hook Input Parsing
 // =============================================================================
 
 /**
- * Get file modification time in seconds (Unix timestamp)
- * @param {string} filePath - Path to the file
- * @returns {number|null} - mtime in seconds, or null if file doesn't exist
+ * Parse hook input from stdin
+ * SessionEnd hooks receive: { transcript_path, session_id, reason, ... }
+ * @param {NodeJS.ReadStream} stdin - The stdin stream
+ * @returns {Promise<{ transcriptPath: string, sessionId: string, reason?: string } | null>}
  */
-export function getMtime(filePath) {
-  try {
-    const stat = fs.statSync(filePath);
-    return Math.floor(stat.mtimeMs / 1000);
-  } catch (err) {
-    if (err.code === 'ENOENT') {
-      return null;
-    }
-    throw err;
-  }
-}
+export function parseHookInput(stdin) {
+  return new Promise((resolve) => {
+    let data = '';
 
-// =============================================================================
-// Transcript Discovery
-// =============================================================================
+    stdin.setEncoding('utf8');
+    stdin.on('data', (chunk) => {
+      data += chunk;
+    });
 
-/**
- * Recursively find all .jsonl files in a directory
- * @param {string} dir - Directory to search
- * @param {string[]} results - Accumulator for results
- * @param {boolean} skipSubagents - Skip files starting with 'agent-'
- * @returns {string[]} - Array of file paths
- */
-function findJsonlFiles(dir, results = [], skipSubagents = false) {
-  let entries;
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch (err) {
-    // Directory doesn't exist or can't be read
-    return results;
-  }
-
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      findJsonlFiles(fullPath, results, skipSubagents);
-    } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-      if (skipSubagents && entry.name.startsWith('agent-')) {
-        continue;
+    stdin.on('end', () => {
+      if (!data.trim()) {
+        resolve(null);
+        return;
       }
-      results.push(fullPath);
-    }
-  }
 
-  return results;
-}
-
-/**
- * Discover recent transcript files from projects directory
- * Filters by: modification time, file size, and optionally skips agent files
- * @param {string} projectsDir - Path to projects directory
- * @param {{ lookbackDays: number, skipSubagents: boolean, minFileSize: number, discoveryLimit: number }} config - Discovery config
- * @returns {string[]} - Array of transcript paths, sorted by mtime descending
- */
-export function discoverTranscripts(projectsDir, config) {
-  const { lookbackDays, skipSubagents, minFileSize, discoveryLimit } = config;
-
-  // Find all .jsonl files recursively (optionally skipping agent-* files)
-  const allFiles = findJsonlFiles(projectsDir, [], skipSubagents);
-
-  if (allFiles.length === 0) {
-    return [];
-  }
-
-  // Calculate cutoff time
-  const cutoffMs = Date.now() - lookbackDays * 24 * 60 * 60 * 1000;
-
-  // Get mtime for each file and filter by lookback window and size
-  const filesWithMtime = [];
-  for (const filePath of allFiles) {
-    try {
-      const stat = fs.statSync(filePath);
-      if (stat.mtimeMs >= cutoffMs && stat.size >= minFileSize) {
-        filesWithMtime.push({ path: filePath, mtimeMs: stat.mtimeMs });
+      try {
+        const parsed = JSON.parse(data);
+        resolve({
+          transcriptPath: parsed.transcript_path || null,
+          sessionId: parsed.session_id || null,
+          reason: parsed.reason || null,
+        });
+      } catch (err) {
+        resolve(null);
       }
-    } catch (err) {
-      // File may have been deleted - skip it
-    }
-  }
+    });
 
-  // Sort by mtime descending (newest first)
-  filesWithMtime.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    stdin.on('error', () => {
+      resolve(null);
+    });
 
-  // Limit and return just the paths
-  return filesWithMtime.slice(0, discoveryLimit).map((f) => f.path);
+    stdin.resume();
+  });
 }
 
 // =============================================================================
@@ -411,146 +199,27 @@ export function discoverTranscripts(projectsDir, config) {
 // =============================================================================
 
 /**
- * Check if a transcript is a skill-manager session (should be skipped)
- * Reads first ~2KB and looks for skill-manager markers to avoid analyzing our own sessions
+ * Check if a transcript is from a subagent session (should be skipped)
  * @param {string} transcriptPath - Path to the transcript file
- * @returns {boolean} - true if this is a skill-manager session, false otherwise
+ * @returns {boolean} - true if this is a subagent session
  */
-export function isSkillManagerSession(transcriptPath) {
+export function isSubagent(transcriptPath) {
+  const filename = path.basename(transcriptPath);
+  return filename.startsWith('agent-');
+}
+
+/**
+ * Count the number of lines in a file
+ * @param {string} filePath - Path to the file
+ * @returns {number} - Number of lines, or 0 if file can't be read
+ */
+export function countLines(filePath) {
   try {
-    const fd = fs.openSync(transcriptPath, 'r');
-    const buffer = Buffer.alloc(2048);
-    const bytesRead = fs.readSync(fd, buffer, 0, 2048, 0);
-    fs.closeSync(fd);
-
-    const head = buffer.toString('utf8', 0, bytesRead);
-
-    // Check for skill-manager specific markers
-    return (
-      head.includes('Extract skills from transcript at:') ||
-      head.includes('skill-manager.md') ||
-      head.includes('Skill Manager') && head.includes('analyzing a Claude Code conversation transcript')
-    );
+    const content = fs.readFileSync(filePath, 'utf8');
+    return content.split('\n').filter(line => line.trim()).length;
   } catch (err) {
-    // If we can't read the file, don't skip it (let later stages handle the error)
-    return false;
+    return 0;
   }
-}
-
-/**
- * Filter transcripts to only those not already in state file
- * Also skips skill-manager's own sessions
- * Note: Subagent and minimal transcript filtering is now done at discovery time
- * @param {string[]} transcripts - Array of transcript paths to filter
- * @param {{ version: number, transcripts: Object }} state - State object with transcripts map
- * @param {number} limit - Maximum number of unanalyzed transcripts to return
- * @returns {string[]} - Array of unanalyzed transcript paths, limited to `limit`
- */
-export function filterUnanalyzed(transcripts, state, limit) {
-  const result = [];
-
-  for (const transcript of transcripts) {
-    // Check if transcript path exists as key in state.transcripts
-    if (!(transcript in state.transcripts)) {
-      // Skip skill-manager's own sessions
-      if (isSkillManagerSession(transcript)) {
-        continue;
-      }
-      result.push(transcript);
-      // Stop once we have enough
-      if (result.length >= limit) {
-        break;
-      }
-    }
-  }
-
-  return result;
-}
-
-// =============================================================================
-// State Management
-// =============================================================================
-
-/**
- * Mark a transcript as completed in state
- * Sets status to "completed", adds analyzed_at timestamp, removes in_progress fields
- * @param {{ version: number, transcripts: Object }} state - Current state object
- * @param {string} transcriptPath - Path to the transcript file
- * @returns {{ version: number, transcripts: Object }} - New state object (does not mutate original)
- */
-export function markTranscriptCompleted(state, transcriptPath) {
-  // Get existing entry or empty object
-  const existingEntry = state.transcripts[transcriptPath] || {};
-
-  // Build new entry: remove in_progress fields (started_at), add completed fields
-  const { started_at, ...rest } = existingEntry;
-
-  const newEntry = {
-    ...rest,
-    status: 'completed',
-    analyzed_at: new Date().toISOString(),
-  };
-
-  return {
-    ...state,
-    transcripts: {
-      ...state.transcripts,
-      [transcriptPath]: newEntry,
-    },
-  };
-}
-
-/**
- * Mark a transcript as failed in state
- * Sets status to "failed", adds failed_at timestamp, exit_code, removes in_progress fields
- * @param {{ version: number, transcripts: Object }} state - Current state object
- * @param {string} transcriptPath - Path to the transcript file
- * @param {number} exitCode - The exit code from the failed process
- * @returns {{ version: number, transcripts: Object }} - New state object (does not mutate original)
- */
-export function markTranscriptFailed(state, transcriptPath, exitCode) {
-  // Get existing entry or empty object
-  const existingEntry = state.transcripts[transcriptPath] || {};
-
-  // Build new entry: remove in_progress fields (started_at), add failed fields
-  const { started_at, ...rest } = existingEntry;
-
-  const newEntry = {
-    ...rest,
-    status: 'failed',
-    failed_at: new Date().toISOString(),
-    exit_code: exitCode,
-  };
-
-  return {
-    ...state,
-    transcripts: {
-      ...state.transcripts,
-      [transcriptPath]: newEntry,
-    },
-  };
-}
-
-/**
- * Mark a transcript as in_progress in state
- * Sets status to "in_progress", adds started_at timestamp
- * @param {{ version: number, transcripts: Object }} state - Current state object
- * @param {string} transcriptPath - Path to the transcript file
- * @returns {{ version: number, transcripts: Object }} - New state object (does not mutate original)
- */
-export function markTranscriptInProgress(state, transcriptPath) {
-  const newEntry = {
-    status: 'in_progress',
-    started_at: new Date().toISOString(),
-  };
-
-  return {
-    ...state,
-    transcripts: {
-      ...state.transcripts,
-      [transcriptPath]: newEntry,
-    },
-  };
 }
 
 // =============================================================================
@@ -815,39 +484,20 @@ export async function runAnalysis(transcriptPath, options) {
 }
 
 // =============================================================================
-// Transcript Processing
+// Main Processing
 // =============================================================================
 
 /**
  * Process a single transcript through the skill extraction pipeline
- * - Checks if file exists (skips if missing)
- * - Marks transcript as in_progress
- * - Preprocesses transcript to reduce tokens
- * - Runs analysis via runAnalysis callback
- * - Cleans up temp files
- * - Marks as completed or failed
- *
  * @param {Object} options
  * @param {string} options.transcriptPath - Path to the transcript file
- * @param {{ version: number, transcripts: Object }} options.state - Current state object
- * @param {string} options.stateFile - Path to the state file
- * @param {function(string): void} options.log - Logging function
- * @param {function(string, string): { exitCode: number }} options.runAnalysis - Function to run analysis (preprocessedPath, originalPath)
- * @param {{ TRUNCATE_LINES: number }} options.config - Configuration options
- * @returns {Promise<{ success?: boolean, skipped?: boolean, reason?: string, transcriptPath: string, exitCode?: number }>}
+ * @param {function(...args): void} options.log - Logging function
+ * @param {{ TRUNCATE_LINES: number, SAVE_OUTPUT: boolean }} options.config - Configuration
+ * @param {string} options.outputsDir - Directory for output files
+ * @returns {Promise<{ success: boolean, exitCode?: number }>}
  */
-export async function processTranscript({ transcriptPath, state, stateFile, log, runAnalysis, config }) {
-  // Check if file exists
-  if (!fs.existsSync(transcriptPath)) {
-    log(`  Skipped (file missing): ${transcriptPath}`);
-    return { skipped: true, reason: 'file_missing', transcriptPath };
-  }
-
+export async function processTranscript({ transcriptPath, log, config, outputsDir }) {
   log(`Processing: ${transcriptPath}`);
-
-  // Mark as in_progress
-  const inProgressState = markTranscriptInProgress(state, transcriptPath);
-  writeStateFile(stateFile, inProgressState);
 
   // Preprocess transcript
   log('  Preprocessing transcript...');
@@ -865,7 +515,11 @@ export async function processTranscript({ transcriptPath, state, stateFile, log,
 
   let result;
   try {
-    result = await runAnalysis(preprocessedFile, transcriptPath);
+    result = await runAnalysis(preprocessedFile, {
+      saveOutput: config.SAVE_OUTPUT,
+      outputsDir,
+      originalTranscriptPath: transcriptPath,
+    });
   } finally {
     // Always clean up temp file
     try {
@@ -878,110 +532,63 @@ export async function processTranscript({ transcriptPath, state, stateFile, log,
   const duration = Math.round((Date.now() - startTime) / 1000);
   const { exitCode } = result;
 
-  // Update state based on result
   if (exitCode === 0) {
-    log(`  Completed in ${duration}s: ${transcriptPath}`);
-    const completedState = markTranscriptCompleted(inProgressState, transcriptPath);
-    writeStateFile(stateFile, completedState);
-    return { success: true, transcriptPath };
+    log(`  Completed in ${duration}s`);
+    return { success: true };
   } else {
-    log(`  Failed (exit ${exitCode}) in ${duration}s: ${transcriptPath}`);
-    const failedState = markTranscriptFailed(inProgressState, transcriptPath, exitCode);
-    writeStateFile(stateFile, failedState);
-    return { success: false, transcriptPath, exitCode };
+    log(`  Failed (exit ${exitCode}) in ${duration}s`);
+    return { success: false, exitCode };
   }
 }
 
-// =============================================================================
-// Main Entry Point
-// =============================================================================
-
 /**
- * Main entry point for skill manager
- * Orchestrates the full transcript analysis pipeline:
- * 1. Initialize directories and state
- * 2. Clean up old logs
- * 3. Check dependencies
- * 4. Discover and filter transcripts
- * 5. Acquire lock and process transcripts
- * 6. Release lock on completion or error
+ * Main entry point for skill manager (worker mode)
+ * Processes a single transcript from hook input
  *
  * @param {Object} options
+ * @param {string} options.transcriptPath - Path to the transcript file
+ * @param {function(...args): void} options.log - Logging function
+ * @param {{ TRUNCATE_LINES: number, MIN_LINES: number, SAVE_OUTPUT: boolean }} options.config - Configuration
  * @param {string} options.stateDir - Path to state directory
- * @param {string} options.projectsDir - Path to projects directory
- * @param {function(string): void} options.log - Logging function
- * @param {function(string): Promise<{ exitCode: number }>} options.runAnalysis - Function to run analysis
- * @param {{ TRANSCRIPT_COUNT: number, LOOKBACK_DAYS: number, TRUNCATE_LINES: number }} options.config - Configuration
- * @param {{ resume: function, on: function }} [options.stdin] - Optional stdin stream for hook compliance
- * @returns {Promise<number|undefined>} - Exit code (0 for success/graceful exit)
+ * @param {string} options.outputsDir - Directory for output files
+ * @returns {Promise<number>} - Exit code (0 for success)
  */
-export async function main({ stateDir, projectsDir, log, runAnalysis, config, stdin }) {
-  // Drain stdin for hook compliance (prevents hanging)
-  if (stdin) {
-    stdin.resume();
-  }
-
-  // 1. Ensure directories exist
+export async function main({ transcriptPath, log, config, stateDir, outputsDir }) {
+  // Ensure state directory exists
   fs.mkdirSync(stateDir, { recursive: true });
 
-  // 2. Clean up old logs
+  // Clean up old logs
   cleanupOldLogs(stateDir);
 
-  // 3. Initialize state file
-  const stateFile = path.join(stateDir, 'analyzed.json');
-  initStateFile(stateFile);
+  // Check if transcript exists
+  if (!fs.existsSync(transcriptPath)) {
+    log(`Skipped (file missing): ${transcriptPath}`);
+    return 0;
+  }
 
-  // 4. Discover transcripts (filters by mtime, size, and optionally skips agents)
-  const transcripts = discoverTranscripts(projectsDir, {
-    lookbackDays: config.LOOKBACK_DAYS,
-    skipSubagents: config.SKIP_SUBAGENTS,
-    minFileSize: config.MIN_FILE_SIZE,
-    discoveryLimit: config.DISCOVERY_LIMIT,
+  // Check if this is a subagent session
+  if (isSubagent(transcriptPath)) {
+    log(`Skipped (subagent): ${transcriptPath}`);
+    return 0;
+  }
+
+  // Check minimum lines
+  const lineCount = countLines(transcriptPath);
+  if (lineCount < config.MIN_LINES) {
+    log(`Skipped (${lineCount} lines < ${config.MIN_LINES} minimum): ${transcriptPath}`);
+    return 0;
+  }
+
+  // Process the transcript
+  const result = await processTranscript({
+    transcriptPath,
+    log,
+    config,
+    outputsDir,
   });
 
-  if (transcripts.length === 0) {
-    log('No transcripts found in projects directory');
-    return 0;
-  }
-
-  // 5. Read state and filter to unanalyzed transcripts
-  const state = readStateFile(stateFile);
-  const unanalyzed = filterUnanalyzed(transcripts, state, config.TRANSCRIPT_COUNT);
-
-  if (unanalyzed.length === 0) {
-    log('All transcripts already analyzed');
-    return 0;
-  }
-
-  // 6. Acquire lock
-  const lockAcquired = acquireLock(stateDir);
-  if (!lockAcquired) {
-    log('Another instance is already running (lock held)');
-    return 0;
-  }
-
-  // 7. Process transcripts (with lock held)
-  try {
-    for (const transcriptPath of unanalyzed) {
-      // Re-read state for each transcript (in case it changed)
-      const currentState = readStateFile(stateFile);
-
-      await processTranscript({
-        transcriptPath,
-        state: currentState,
-        stateFile,
-        log,
-        runAnalysis,
-        config,
-      });
-    }
-  } finally {
-    // 8. Always release lock
-    releaseLock(stateDir);
-  }
-
   log('=== Processing complete ===');
-  return 0;
+  return result.success ? 0 : 1;
 }
 
 // =============================================================================
@@ -997,42 +604,72 @@ if (isMainModule) {
   const logFn = (...args) => log(paths.LOG_FILE, ...args);
 
   // Detect execution context:
-  // - TTY (interactive terminal): run directly
-  // - Piped stdin (hook context): spawn detached child and exit quickly
-  // - --worker flag: internal flag for spawned child process
+  // - TTY (interactive terminal): expect transcript path as argument
+  // - Piped stdin (hook context): parse JSON from stdin, spawn detached child
+  // - --worker flag with path: internal flag for spawned child process
   const isWorker = process.argv.includes('--worker');
   const isInteractive = process.stdin.isTTY;
 
-  if (isWorker || isInteractive) {
-    // Run the skill extraction directly
-    if (!isWorker) {
-      logFn('=== Manual run ===');
+  if (isWorker) {
+    // Worker mode: transcript path passed as argument after --worker
+    const workerIndex = process.argv.indexOf('--worker');
+    const transcriptPath = process.argv[workerIndex + 1];
+
+    if (!transcriptPath) {
+      logFn('Error: No transcript path provided to worker');
+      process.exit(1);
     }
 
     main({
-      stateDir: paths.STATE_DIR,
-      projectsDir: paths.PROJECTS_DIR,
+      transcriptPath,
       log: logFn,
-      runAnalysis: (preprocessedPath, originalPath) => runAnalysis(preprocessedPath, {
-        saveOutput: config.SAVE_OUTPUT,
-        outputsDir: paths.OUTPUTS_DIR,
-        originalTranscriptPath: originalPath,
-      }),
       config,
-      stdin: process.stdin,
+      stateDir: paths.STATE_DIR,
+      outputsDir: paths.OUTPUTS_DIR,
+    }).then((code) => {
+      process.exit(code);
+    }).catch((err) => {
+      logFn('Error:', err.message);
+      process.exit(1);
+    });
+  } else if (isInteractive) {
+    // Interactive mode: require transcript path as argument
+    const transcriptPath = process.argv[2];
+
+    if (!transcriptPath) {
+      console.error('Usage: trigger.js <transcript_path>');
+      console.error('  Or pipe SessionEnd hook JSON to stdin');
+      process.exit(1);
+    }
+
+    logFn('=== Manual run ===');
+
+    main({
+      transcriptPath,
+      log: logFn,
+      config,
+      stateDir: paths.STATE_DIR,
+      outputsDir: paths.OUTPUTS_DIR,
+    }).then((code) => {
+      process.exit(code);
     }).catch((err) => {
       logFn('Error:', err.message);
       process.exit(1);
     });
   } else {
-    // Hook context - spawn detached child and exit quickly
+    // Hook context - parse stdin, spawn detached child
     logFn('=== SessionEnd triggered ===');
 
-    // Drain stdin for hook compliance
-    process.stdin.resume();
-    process.stdin.on('end', () => {
-      // Spawn detached child process with --worker flag
-      const child = spawn(process.execPath, [process.argv[1], '--worker'], {
+    parseHookInput(process.stdin).then((input) => {
+      if (!input || !input.transcriptPath) {
+        logFn('No transcript_path in hook input, skipping');
+        process.exit(0);
+      }
+
+      logFn(`Received transcript_path: ${input.transcriptPath}`);
+
+      // Spawn detached child process with --worker flag and transcript path
+      const child = spawn(process.execPath, [process.argv[1], '--worker', input.transcriptPath], {
         detached: true,
         stdio: 'ignore',
       });

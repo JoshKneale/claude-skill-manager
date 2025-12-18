@@ -12,12 +12,8 @@ describe('loadConfig', () => {
   // Store original env vars to restore after each test
   let originalEnv;
   const envKeys = [
-    'SKILL_MANAGER_COUNT',
-    'SKILL_MANAGER_LOOKBACK_DAYS',
     'SKILL_MANAGER_TRUNCATE_LINES',
-    'SKILL_MANAGER_SKIP_SUBAGENTS',
-    'SKILL_MANAGER_DISCOVERY_LIMIT',
-    'SKILL_MANAGER_MIN_FILE_SIZE',
+    'SKILL_MANAGER_MIN_LINES',
     'SKILL_MANAGER_SAVE_OUTPUT',
   ];
 
@@ -40,31 +36,9 @@ describe('loadConfig', () => {
     }
   });
 
-  it('should use default TRANSCRIPT_COUNT of 1 when env var not set', () => {
-    const config = loadConfig();
-    assert.strictEqual(config.TRANSCRIPT_COUNT, 1);
-  });
-
-  it('should use default LOOKBACK_DAYS of 7 when env var not set', () => {
-    const config = loadConfig();
-    assert.strictEqual(config.LOOKBACK_DAYS, 7);
-  });
-
   it('should use default TRUNCATE_LINES of 30 when env var not set', () => {
     const config = loadConfig();
     assert.strictEqual(config.TRUNCATE_LINES, 30);
-  });
-
-  it('should override TRANSCRIPT_COUNT from SKILL_MANAGER_COUNT env var', () => {
-    process.env.SKILL_MANAGER_COUNT = '5';
-    const config = loadConfig();
-    assert.strictEqual(config.TRANSCRIPT_COUNT, 5);
-  });
-
-  it('should override LOOKBACK_DAYS from SKILL_MANAGER_LOOKBACK_DAYS env var', () => {
-    process.env.SKILL_MANAGER_LOOKBACK_DAYS = '14';
-    const config = loadConfig();
-    assert.strictEqual(config.LOOKBACK_DAYS, 14);
   });
 
   it('should override TRUNCATE_LINES from SKILL_MANAGER_TRUNCATE_LINES env var', () => {
@@ -73,37 +47,15 @@ describe('loadConfig', () => {
     assert.strictEqual(config.TRUNCATE_LINES, 50);
   });
 
-  it('should use default SKIP_SUBAGENTS of true when env var not set', () => {
+  it('should use default MIN_LINES of 10 when env var not set', () => {
     const config = loadConfig();
-    assert.strictEqual(config.SKIP_SUBAGENTS, true);
+    assert.strictEqual(config.MIN_LINES, 10);
   });
 
-  it('should set SKIP_SUBAGENTS to false when env var is "0"', () => {
-    process.env.SKILL_MANAGER_SKIP_SUBAGENTS = '0';
+  it('should override MIN_LINES from SKILL_MANAGER_MIN_LINES env var', () => {
+    process.env.SKILL_MANAGER_MIN_LINES = '20';
     const config = loadConfig();
-    assert.strictEqual(config.SKIP_SUBAGENTS, false);
-  });
-
-  it('should use default DISCOVERY_LIMIT of 1000 when env var not set', () => {
-    const config = loadConfig();
-    assert.strictEqual(config.DISCOVERY_LIMIT, 1000);
-  });
-
-  it('should override DISCOVERY_LIMIT from env var', () => {
-    process.env.SKILL_MANAGER_DISCOVERY_LIMIT = '500';
-    const config = loadConfig();
-    assert.strictEqual(config.DISCOVERY_LIMIT, 500);
-  });
-
-  it('should use default MIN_FILE_SIZE of 2000 when env var not set', () => {
-    const config = loadConfig();
-    assert.strictEqual(config.MIN_FILE_SIZE, 2000);
-  });
-
-  it('should override MIN_FILE_SIZE from env var', () => {
-    process.env.SKILL_MANAGER_MIN_FILE_SIZE = '1000';
-    const config = loadConfig();
-    assert.strictEqual(config.MIN_FILE_SIZE, 1000);
+    assert.strictEqual(config.MIN_LINES, 20);
   });
 
   it('should use default SAVE_OUTPUT of false when env var not set', () => {
@@ -115,5 +67,11 @@ describe('loadConfig', () => {
     process.env.SKILL_MANAGER_SAVE_OUTPUT = '1';
     const config = loadConfig();
     assert.strictEqual(config.SAVE_OUTPUT, true);
+  });
+
+  it('should keep SAVE_OUTPUT as false for other values', () => {
+    process.env.SKILL_MANAGER_SAVE_OUTPUT = 'true';
+    const config = loadConfig();
+    assert.strictEqual(config.SAVE_OUTPUT, false);
   });
 });

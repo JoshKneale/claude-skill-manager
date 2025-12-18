@@ -1,5 +1,5 @@
 /**
- * Tests for main function (integration)
+ * Tests for main function (simplified version)
  * Run with: npm test
  */
 
@@ -18,63 +18,37 @@ function createTempDir() {
 }
 
 // Helper to create a temp JSONL file with given entries
-// Pads with dummy entries to ensure file passes MIN_FILE_SIZE filter
-function createTempJsonl(dir, entries, options = {}) {
-  const { minSize = 600 } = options;
-  const tmpFile = path.join(dir, `test-transcript-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`);
-
-  // Pad entries to meet minimum file size
-  const paddedEntries = [...entries];
-  let content = paddedEntries.map((e) => JSON.stringify(e)).join('\n');
-
-  // Add padding entries until we reach minimum size
-  let index = paddedEntries.length;
-  while (content.length < minSize) {
-    const paddingEntry = JSON.stringify({ type: 'padding', index: index++, data: 'x'.repeat(50) });
-    content += '\n' + paddingEntry;
-  }
-
+function createTempJsonl(dir, entries, filename = null) {
+  const tmpFile = path.join(dir, filename || `test-transcript-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`);
+  const content = entries.map((e) => JSON.stringify(e)).join('\n');
   fs.writeFileSync(tmpFile, content);
   return tmpFile;
 }
 
-// Default config for tests (includes all required options)
+// Default config for tests
 const defaultTestConfig = {
-  TRANSCRIPT_COUNT: 1,
-  LOOKBACK_DAYS: 7,
   TRUNCATE_LINES: 30,
-  SKIP_SUBAGENTS: true,
-  DISCOVERY_LIMIT: 1000,
-  MIN_FILE_SIZE: 500,
+  MIN_LINES: 5,
+  SAVE_OUTPUT: false,
 };
-
-// Helper to create initial state
-function createInitialState() {
-  return { version: 1, transcripts: {} };
-}
 
 describe('main', () => {
   let tempDir;
   let stateDir;
-  let projectsDir;
+  let outputsDir;
   let logMessages;
   let mockLog;
-  let originalEnv;
 
   beforeEach(() => {
     // Create a unique temp directory structure for each test
     tempDir = createTempDir();
     stateDir = path.join(tempDir, '.claude', 'skill-manager');
-    projectsDir = path.join(tempDir, '.claude', 'projects');
+    outputsDir = path.join(stateDir, 'outputs');
     fs.mkdirSync(stateDir, { recursive: true });
-    fs.mkdirSync(projectsDir, { recursive: true });
 
     // Capture log messages
     logMessages = [];
     mockLog = (msg) => logMessages.push(msg);
-
-    // Save original env
-    originalEnv = { ...process.env };
   });
 
   afterEach(() => {
@@ -82,31 +56,41 @@ describe('main', () => {
     if (tempDir && fs.existsSync(tempDir)) {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
-    // Restore original env
-    process.env = originalEnv;
     mock.reset();
   });
 
   describe('initialization', () => {
     it('should ensure directories exist', async () => {
-      // Import main (will fail until implemented)
       const { main } = await import('../scripts/trigger.js');
 
       // Remove state dir to test creation
       fs.rmSync(stateDir, { recursive: true, force: true });
       assert.strictEqual(fs.existsSync(stateDir), false, 'State dir should not exist before main');
 
-      // Call main with mocked paths
+      // Create a transcript with enough lines
+      const transcriptDir = createTempDir();
+      const transcriptPath = createTempJsonl(transcriptDir, [
+        { type: 'user', message: { content: '1' } },
+        { type: 'assistant', message: { content: '2' } },
+        { type: 'user', message: { content: '3' } },
+        { type: 'assistant', message: { content: '4' } },
+        { type: 'user', message: { content: '5' } },
+        { type: 'assistant', message: { content: '6' } },
+      ]);
+
       await main({
-        stateDir,
-        projectsDir,
+        transcriptPath,
         log: mockLog,
-        runAnalysis: mock.fn(() => ({ exitCode: 0 })),
         config: defaultTestConfig,
+        stateDir,
+        outputsDir,
       });
 
       // State dir should now exist
       assert.strictEqual(fs.existsSync(stateDir), true, 'State dir should be created by main');
+
+      // Clean up
+      fs.rmSync(transcriptDir, { recursive: true, force: true });
     });
 
     it('should cleanup old logs', async () => {
@@ -124,324 +108,153 @@ describe('main', () => {
 
       assert.strictEqual(fs.existsSync(oldLogFile), true, 'Old log should exist before main');
 
+      // Create a transcript with enough lines
+      const transcriptDir = createTempDir();
+      const transcriptPath = createTempJsonl(transcriptDir, [
+        { type: 'user', message: { content: '1' } },
+        { type: 'assistant', message: { content: '2' } },
+        { type: 'user', message: { content: '3' } },
+        { type: 'assistant', message: { content: '4' } },
+        { type: 'user', message: { content: '5' } },
+        { type: 'assistant', message: { content: '6' } },
+      ]);
+
       await main({
-        stateDir,
-        projectsDir,
+        transcriptPath,
         log: mockLog,
-        runAnalysis: mock.fn(() => ({ exitCode: 0 })),
         config: defaultTestConfig,
+        stateDir,
+        outputsDir,
       });
 
       // Old log should be cleaned up
       assert.strictEqual(fs.existsSync(oldLogFile), false, 'Old log should be deleted by main');
-    });
 
-    it('should initialize state file', async () => {
-      const { main } = await import('../scripts/trigger.js');
-
-      const stateFile = path.join(stateDir, 'analyzed.json');
-
-      // Ensure no state file exists
-      if (fs.existsSync(stateFile)) {
-        fs.unlinkSync(stateFile);
-      }
-
-      await main({
-        stateDir,
-        projectsDir,
-        log: mockLog,
-        runAnalysis: mock.fn(() => ({ exitCode: 0 })),
-        config: defaultTestConfig,
-      });
-
-      // State file should exist and be valid JSON
-      assert.strictEqual(fs.existsSync(stateFile), true, 'State file should be created');
-      const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-      assert.strictEqual(typeof state.version, 'number', 'State should have version number');
-      assert.strictEqual(typeof state.transcripts, 'object', 'State should have transcripts object');
+      // Clean up
+      fs.rmSync(transcriptDir, { recursive: true, force: true });
     });
   });
 
-  describe('transcript discovery', () => {
-    it('should exit gracefully if projects directory missing', async () => {
+  describe('transcript filtering', () => {
+    it('should skip if transcript file missing', async () => {
       const { main } = await import('../scripts/trigger.js');
 
-      // Remove projects directory
-      fs.rmSync(projectsDir, { recursive: true, force: true });
-
       const result = await main({
-        stateDir,
-        projectsDir,
+        transcriptPath: '/nonexistent/path/transcript.jsonl',
         log: mockLog,
-        runAnalysis: mock.fn(() => ({ exitCode: 0 })),
         config: defaultTestConfig,
+        stateDir,
+        outputsDir,
       });
 
-      // Should exit gracefully (return 0 or undefined, not throw)
-      assert.ok(result === 0 || result === undefined, 'Should exit gracefully when projects dir missing');
+      // Should exit gracefully
+      assert.strictEqual(result, 0, 'Should return 0 for missing file');
 
-      // Should log about missing directory
+      // Should log about missing file
       const missedLog = logMessages.some(
-        (msg) => msg.includes('projects') || msg.includes('No transcripts') || msg.includes('missing')
+        (msg) => msg.includes('missing') || msg.includes('Skipped')
       );
-      assert.ok(missedLog, `Should log about missing projects directory. Got: ${JSON.stringify(logMessages)}`);
+      assert.ok(missedLog, `Should log about missing file. Got: ${JSON.stringify(logMessages)}`);
     });
 
-    it('should exit gracefully if no recent transcripts', async () => {
+    it('should skip subagent sessions', async () => {
       const { main } = await import('../scripts/trigger.js');
 
-      // Projects directory exists but is empty (no transcripts)
-      // Already empty from beforeEach
+      // Create a subagent transcript (starts with agent-)
+      const transcriptDir = createTempDir();
+      const transcriptPath = createTempJsonl(transcriptDir, [
+        { type: 'user', message: { content: '1' } },
+        { type: 'assistant', message: { content: '2' } },
+        { type: 'user', message: { content: '3' } },
+        { type: 'assistant', message: { content: '4' } },
+        { type: 'user', message: { content: '5' } },
+        { type: 'assistant', message: { content: '6' } },
+      ], 'agent-test-session.jsonl');
 
       const result = await main({
-        stateDir,
-        projectsDir,
+        transcriptPath,
         log: mockLog,
-        runAnalysis: mock.fn(() => ({ exitCode: 0 })),
         config: defaultTestConfig,
+        stateDir,
+        outputsDir,
       });
 
       // Should exit gracefully
-      assert.ok(result === 0 || result === undefined, 'Should exit gracefully when no transcripts');
+      assert.strictEqual(result, 0, 'Should return 0 for subagent');
+
+      // Should log about subagent
+      const subagentLog = logMessages.some(
+        (msg) => msg.includes('subagent') || msg.includes('Skipped')
+      );
+      assert.ok(subagentLog, `Should log about subagent. Got: ${JSON.stringify(logMessages)}`);
+
+      // Clean up
+      fs.rmSync(transcriptDir, { recursive: true, force: true });
     });
 
-    it('should exit gracefully if all transcripts analyzed', async () => {
+    it('should skip transcripts with too few lines', async () => {
       const { main } = await import('../scripts/trigger.js');
 
-      // Create a transcript file
-      const transcriptPath = createTempJsonl(projectsDir, [
+      // Create a transcript with fewer lines than MIN_LINES
+      const transcriptDir = createTempDir();
+      const transcriptPath = createTempJsonl(transcriptDir, [
         { type: 'user', message: { content: 'hello' } },
+        { type: 'assistant', message: { content: 'hi' } },
       ]);
 
-      // Create state file marking it as already analyzed
-      const stateFile = path.join(stateDir, 'analyzed.json');
-      const state = {
-        version: 1,
-        transcripts: {
-          [transcriptPath]: { status: 'completed', analyzed_at: new Date().toISOString() },
-        },
-      };
-      fs.writeFileSync(stateFile, JSON.stringify(state));
-
-      const mockRunAnalysis = mock.fn(() => ({ exitCode: 0 }));
-
       const result = await main({
-        stateDir,
-        projectsDir,
+        transcriptPath,
         log: mockLog,
-        runAnalysis: mockRunAnalysis,
-        config: defaultTestConfig,
-      });
-
-      // Should exit gracefully without processing
-      assert.ok(result === 0 || result === undefined, 'Should exit gracefully when all analyzed');
-
-      // Should NOT have called runAnalysis
-      assert.strictEqual(mockRunAnalysis.mock.calls.length, 0, 'Should not process already-analyzed transcripts');
-    });
-  });
-
-  describe('locking', () => {
-    it('should exit gracefully if lock already held', async () => {
-      const { main, acquireLock } = await import('../scripts/trigger.js');
-
-      // Create a transcript to process
-      createTempJsonl(projectsDir, [
-        { type: 'user', message: { content: 'hello' } },
-      ]);
-
-      // Acquire lock before calling main
-      const lockAcquired = acquireLock(stateDir);
-      assert.strictEqual(lockAcquired, true, 'Should be able to acquire lock');
-
-      const mockRunAnalysis = mock.fn(() => ({ exitCode: 0 }));
-
-      const result = await main({
+        config: { ...defaultTestConfig, MIN_LINES: 10 },
         stateDir,
-        projectsDir,
-        log: mockLog,
-        runAnalysis: mockRunAnalysis,
-        config: defaultTestConfig,
+        outputsDir,
       });
 
       // Should exit gracefully
-      assert.ok(result === 0 || result === undefined, 'Should exit gracefully when lock held');
+      assert.strictEqual(result, 0, 'Should return 0 for short transcript');
 
-      // Should log about lock
-      const lockLog = logMessages.some(
-        (msg) => msg.includes('lock') || msg.includes('running') || msg.includes('held')
+      // Should log about minimum lines
+      const minLinesLog = logMessages.some(
+        (msg) => msg.includes('lines') || msg.includes('minimum') || msg.includes('Skipped')
       );
-      assert.ok(lockLog, `Should log about lock being held. Got: ${JSON.stringify(logMessages)}`);
+      assert.ok(minLinesLog, `Should log about minimum lines. Got: ${JSON.stringify(logMessages)}`);
 
-      // Should NOT have called runAnalysis
-      assert.strictEqual(mockRunAnalysis.mock.calls.length, 0, 'Should not process when lock held');
-    });
-
-    it('should release lock on completion', async () => {
-      const { main } = await import('../scripts/trigger.js');
-
-      // Create a transcript to process
-      createTempJsonl(projectsDir, [
-        { type: 'user', message: { content: 'hello' } },
-      ]);
-
-      await main({
-        stateDir,
-        projectsDir,
-        log: mockLog,
-        runAnalysis: mock.fn(() => ({ exitCode: 0 })),
-        config: defaultTestConfig,
-      });
-
-      // Lock should be released (lock directory should not exist)
-      const lockDir = path.join(stateDir, 'skill-manager.lock.d');
-      assert.strictEqual(fs.existsSync(lockDir), false, 'Lock should be released after main completes');
-    });
-
-    it('should release lock on error', async () => {
-      const { main } = await import('../scripts/trigger.js');
-
-      // Create a transcript to process
-      createTempJsonl(projectsDir, [
-        { type: 'user', message: { content: 'hello' } },
-      ]);
-
-      // Mock runAnalysis to throw an error
-      const throwingRunAnalysis = mock.fn(() => {
-        throw new Error('Simulated analysis failure');
-      });
-
-      // Should not throw to the caller, but handle the error gracefully
-      try {
-        await main({
-          stateDir,
-          projectsDir,
-          log: mockLog,
-          runAnalysis: throwingRunAnalysis,
-          config: defaultTestConfig,
-        });
-      } catch (err) {
-        // It's okay if it throws, but lock should still be released
-      }
-
-      // Lock should be released even after error
-      const lockDir = path.join(stateDir, 'skill-manager.lock.d');
-      assert.strictEqual(fs.existsSync(lockDir), false, 'Lock should be released even after error');
+      // Clean up
+      fs.rmSync(transcriptDir, { recursive: true, force: true });
     });
   });
 
   describe('processing', () => {
-    it('should process up to TRANSCRIPT_COUNT transcripts', async () => {
+    it('should process valid transcripts', async () => {
       const { main } = await import('../scripts/trigger.js');
 
-      // Create multiple transcripts
-      const transcript1 = createTempJsonl(projectsDir, [{ type: 'user', message: { content: '1' } }]);
-      const transcript2 = createTempJsonl(projectsDir, [{ type: 'user', message: { content: '2' } }]);
-      const transcript3 = createTempJsonl(projectsDir, [{ type: 'user', message: { content: '3' } }]);
-
-      const processedPaths = [];
-      const mockRunAnalysis = mock.fn((path) => {
-        processedPaths.push(path);
-        return { exitCode: 0 };
-      });
-
-      // Set TRANSCRIPT_COUNT to 2
-      await main({
-        stateDir,
-        projectsDir,
-        log: mockLog,
-        runAnalysis: mockRunAnalysis,
-        config: { ...defaultTestConfig, TRANSCRIPT_COUNT: 2 },
-      });
-
-      // Should have processed exactly 2 transcripts
-      assert.strictEqual(mockRunAnalysis.mock.calls.length, 2, 'Should process exactly TRANSCRIPT_COUNT transcripts');
-    });
-
-    it('should process transcripts in order (newest first)', async () => {
-      const { main } = await import('../scripts/trigger.js');
-
-      // Create transcripts with different modification times
-      const older = createTempJsonl(projectsDir, [{ type: 'user', message: { content: 'older' } }]);
-      // Wait a bit to ensure different mtime
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      const newer = createTempJsonl(projectsDir, [{ type: 'user', message: { content: 'newer' } }]);
-
-      // Set mtime to be clearly different (older is 2 hours ago)
-      const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
-      fs.utimesSync(older, new Date(twoHoursAgo), new Date(twoHoursAgo));
-
-      const processOrder = [];
-      const mockRunAnalysis = mock.fn((preprocessedPath) => {
-        // We need to check which original transcript this corresponds to
-        // Since preprocessed paths are different, we track order of calls
-        processOrder.push(mockRunAnalysis.mock.calls.length);
-        return { exitCode: 0 };
-      });
-
-      await main({
-        stateDir,
-        projectsDir,
-        log: mockLog,
-        runAnalysis: mockRunAnalysis,
-        config: { ...defaultTestConfig, TRANSCRIPT_COUNT: 2 },
-      });
-
-      // Verify both were processed
-      assert.strictEqual(mockRunAnalysis.mock.calls.length, 2, 'Should process both transcripts');
-
-      // The order should be newest first (based on mtime)
-      // We can verify this by checking logs or state file
-      const stateFile = path.join(stateDir, 'analyzed.json');
-      const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-
-      // Both should be in state
-      assert.ok(state.transcripts[newer], 'Newer transcript should be in state');
-      assert.ok(state.transcripts[older], 'Older transcript should be in state');
-    });
-  });
-
-  describe('stdin handling', () => {
-    it('should read and discard stdin (hook compliance)', async () => {
-      const { main } = await import('../scripts/trigger.js');
-
-      // Create a transcript to process
-      createTempJsonl(projectsDir, [
-        { type: 'user', message: { content: 'hello' } },
+      // Create a transcript with enough lines
+      const transcriptDir = createTempDir();
+      const transcriptPath = createTempJsonl(transcriptDir, [
+        { type: 'user', message: { content: '1' } },
+        { type: 'assistant', message: { content: '2' } },
+        { type: 'user', message: { content: '3' } },
+        { type: 'assistant', message: { content: '4' } },
+        { type: 'user', message: { content: '5' } },
+        { type: 'assistant', message: { content: '6' } },
       ]);
 
-      // The main function should accept a stdin option or handle process.stdin
-      // This test verifies the function doesn't hang waiting for stdin
-      // and properly drains it for hook compliance
-
-      let stdinConsumed = false;
-      const mockStdin = {
-        resume: mock.fn(() => {
-          stdinConsumed = true;
-        }),
-        on: mock.fn((event, cb) => {
-          if (event === 'end') {
-            // Simulate stdin ending immediately
-            setImmediate(cb);
-          }
-        }),
-      };
-
       await main({
-        stateDir,
-        projectsDir,
+        transcriptPath,
         log: mockLog,
-        runAnalysis: mock.fn(() => ({ exitCode: 0 })),
         config: defaultTestConfig,
-        stdin: mockStdin,
+        stateDir,
+        outputsDir,
       });
 
-      // stdin should have been consumed (resume called to drain)
-      // Note: The actual implementation may vary - this tests the contract
-      assert.ok(
-        mockStdin.resume.mock.calls.length > 0 || stdinConsumed,
-        'stdin should be consumed for hook compliance'
+      // Should log processing
+      const processingLog = logMessages.some(
+        (msg) => msg.includes('Processing') || msg.includes('complete')
       );
+      assert.ok(processingLog, `Should log processing. Got: ${JSON.stringify(logMessages)}`);
+
+      // Clean up
+      fs.rmSync(transcriptDir, { recursive: true, force: true });
     });
   });
 });
