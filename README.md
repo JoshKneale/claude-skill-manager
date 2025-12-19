@@ -90,6 +90,7 @@ rm -rf ~/.claude/skill-manager  # Optional: remove logs/state
 
 Your extracted skills in `~/.claude/skills/` are preserved.
 
+## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
