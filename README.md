@@ -17,22 +17,6 @@ A Claude Code plugin that automatically extracts reusable skills from your conve
 /plugin install skill-manager@skill-manager-marketplace
 ```
 
-### Local Development
-
-```bash
-# Clone the repository
-git clone https://github.com/joshkneale/claude-skill-manager.git
-
-# Add local directory as marketplace
-/plugin marketplace add ./path/to/claude-skill-manager
-
-# Install the plugin
-/plugin install skill-manager@skill-manager-marketplace
-
-# Test with a transcript (note: env var must be on the node command, not echo)
-echo '{"transcript_path": "/path/to/transcript.jsonl"}' | SKILL_MANAGER_SAVE_OUTPUT=1 node scripts/trigger.js
-```
-
 ## How It Works
 
 When a Claude Code session ends, the plugin:
@@ -42,7 +26,6 @@ When a Claude Code session ends, the plugin:
 3. Enhances existing skills or creates new ones in `~/.claude/skills/`
 
 Skills capture **what worked, what failed, and why**. Failures are often more valuable than successes.
-
 
 
 ## Configuration
@@ -60,6 +43,26 @@ Run skill extraction on any transcript:
 ```
 /skill-manager /path/to/transcript.jsonl
 ```
+
+### Local Development
+
+```bash
+# Clone the repository
+git clone https://github.com/joshkneale/claude-skill-manager.git
+
+# Run tests
+npm test
+
+# Add local directory as marketplace
+/plugin marketplace add ./path/to/claude-skill-manager
+
+# Install the plugin
+/plugin install skill-manager@skill-manager-marketplace
+
+# Test with a transcript (note: env var must be on the node command, not echo)
+echo '{"transcript_path": "/path/to/transcript.jsonl"}' | SKILL_MANAGER_SAVE_OUTPUT=1 node scripts/trigger.js
+```
+
 
 ## Troubleshooting
 
@@ -87,11 +90,6 @@ rm -rf ~/.claude/skill-manager  # Optional: remove logs/state
 
 Your extracted skills in `~/.claude/skills/` are preserved.
 
-## Development
-
-```bash
-npm install && npm test
-```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
