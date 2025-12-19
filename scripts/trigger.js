@@ -758,7 +758,7 @@ if (isMainModule) {
     });
   } else {
     // Hook context - parse stdin, spawn detached child
-    logFn('=== SessionEnd triggered ===');
+    logFn('=== Skill extraction triggered ===');
 
     parseHookInput(process.stdin).then((input) => {
       if (!input || !input.transcriptPath) {
