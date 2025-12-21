@@ -93,6 +93,32 @@ describe('preprocessTranscript', () => {
       assert.strictEqual(result.length, 1);
       assert.strictEqual(result[0].type, 'assistant');
     });
+
+    it('should remove summary entries', () => {
+      inputFile = createTempJsonl([
+        { type: 'summary', summary: [{ content: 'session summary' }], leafUuid: 'uuid' },
+        { type: 'user', message: { content: 'hello' } },
+      ]);
+
+      outputFile = preprocessTranscript(inputFile, { truncateLines: 30 });
+      const result = readJsonl(outputFile);
+
+      assert.strictEqual(result.length, 1);
+      assert.strictEqual(result[0].type, 'user');
+    });
+
+    it('should remove system entries', () => {
+      inputFile = createTempJsonl([
+        { type: 'system', message: { content: 'system prompt' } },
+        { type: 'assistant', message: { content: 'response' } },
+      ]);
+
+      outputFile = preprocessTranscript(inputFile, { truncateLines: 30 });
+      const result = readJsonl(outputFile);
+
+      assert.strictEqual(result.length, 1);
+      assert.strictEqual(result[0].type, 'assistant');
+    });
   });
 
   describe('removing redundant fields', () => {
@@ -156,7 +182,7 @@ describe('preprocessTranscript', () => {
       assert.strictEqual(result[0].gitBranch, undefined);
     });
 
-    it('should remove message.role field', () => {
+    it('should extract content from message.content', () => {
       inputFile = createTempJsonl([
         { type: 'user', message: { role: 'user', content: 'test' } },
       ]);
@@ -165,17 +191,21 @@ describe('preprocessTranscript', () => {
       const result = readJsonl(outputFile);
 
       assert.strictEqual(result.length, 1);
-      assert.strictEqual(result[0].message.role, undefined);
-      assert.strictEqual(result[0].message.content, 'test');
+      // Content should be at top level, not nested in message
+      assert.strictEqual(result[0].content, 'test');
+      assert.strictEqual(result[0].message, undefined);
     });
 
-    it('should preserve other fields', () => {
+    it('should keep only type and content fields', () => {
       inputFile = createTempJsonl([
         {
           type: 'user',
           timestamp: '2024-01-15T10:00:00Z',
           sessionId: 'abc123',
-          message: { content: 'test', model: 'claude-3' },
+          uuid: 'some-uuid',
+          parentUuid: 'parent-uuid',
+          requestId: 'req-123',
+          message: { content: 'test', model: 'claude-3', role: 'user' },
         },
       ]);
 
@@ -183,9 +213,129 @@ describe('preprocessTranscript', () => {
       const result = readJsonl(outputFile);
 
       assert.strictEqual(result.length, 1);
-      assert.strictEqual(result[0].timestamp, '2024-01-15T10:00:00Z');
-      assert.strictEqual(result[0].sessionId, 'abc123');
-      assert.strictEqual(result[0].message.model, 'claude-3');
+      // Only type and content should remain
+      const keys = Object.keys(result[0]);
+      assert.strictEqual(keys.length, 2);
+      assert.ok(keys.includes('type'));
+      assert.ok(keys.includes('content'));
+      // Verify all other fields are stripped
+      assert.strictEqual(result[0].timestamp, undefined);
+      assert.strictEqual(result[0].sessionId, undefined);
+      assert.strictEqual(result[0].uuid, undefined);
+      assert.strictEqual(result[0].message, undefined);
+    });
+  });
+
+  describe('processing content items', () => {
+    it('should strip thinking.signature while keeping thinking.thinking', () => {
+      const thinkingBlock = {
+        type: 'thinking',
+        thinking: 'Let me analyze this problem...',
+        signature: 'EvkDCkYIChgCKkA/w0FI...very-long-base64-signature...',
+      };
+
+      inputFile = createTempJsonl([
+        { type: 'assistant', message: { content: [thinkingBlock] } },
+      ]);
+
+      outputFile = preprocessTranscript(inputFile, { truncateLines: 30 });
+      const result = readJsonl(outputFile);
+
+      assert.strictEqual(result.length, 1);
+      assert.strictEqual(result[0].content[0].type, 'thinking');
+      assert.strictEqual(result[0].content[0].thinking, 'Let me analyze this problem...');
+      assert.strictEqual(result[0].content[0].signature, undefined);
+    });
+
+    it('should strip tool_use_id from tool_result while keeping content', () => {
+      const toolResult = {
+        type: 'tool_result',
+        tool_use_id: 'toolu_01V6TahtfCHsh2W7SqKpn6uu',
+        content: 'File contents here...',
+      };
+
+      inputFile = createTempJsonl([
+        { type: 'user', message: { content: [toolResult] } },
+      ]);
+
+      outputFile = preprocessTranscript(inputFile, { truncateLines: 30 });
+      const result = readJsonl(outputFile);
+
+      assert.strictEqual(result.length, 1);
+      assert.strictEqual(result[0].content[0].type, 'tool_result');
+      assert.strictEqual(result[0].content[0].content, 'File contents here...');
+      assert.strictEqual(result[0].content[0].tool_use_id, undefined);
+    });
+
+    it('should keep tool_use name and input', () => {
+      const toolUse = {
+        type: 'tool_use',
+        id: 'toolu_01V6TahtfCHsh2W7SqKpn6uu',
+        name: 'Read',
+        input: { file_path: '/path/to/file.js' },
+      };
+
+      inputFile = createTempJsonl([
+        { type: 'assistant', message: { content: [toolUse] } },
+      ]);
+
+      outputFile = preprocessTranscript(inputFile, { truncateLines: 30 });
+      const result = readJsonl(outputFile);
+
+      assert.strictEqual(result.length, 1);
+      assert.strictEqual(result[0].content[0].type, 'tool_use');
+      assert.strictEqual(result[0].content[0].name, 'Read');
+      assert.deepStrictEqual(result[0].content[0].input, { file_path: '/path/to/file.js' });
+      assert.strictEqual(result[0].content[0].id, undefined);
+    });
+
+    it('should keep text blocks unchanged', () => {
+      const textBlock = {
+        type: 'text',
+        text: 'Let me help you with that.',
+      };
+
+      inputFile = createTempJsonl([
+        { type: 'assistant', message: { content: [textBlock] } },
+      ]);
+
+      outputFile = preprocessTranscript(inputFile, { truncateLines: 30 });
+      const result = readJsonl(outputFile);
+
+      assert.strictEqual(result.length, 1);
+      assert.strictEqual(result[0].content[0].type, 'text');
+      assert.strictEqual(result[0].content[0].text, 'Let me help you with that.');
+    });
+
+    it('should process mixed content arrays correctly', () => {
+      const mixedContent = [
+        { type: 'thinking', thinking: 'Analyzing...', signature: 'sig123' },
+        { type: 'text', text: 'Here is what I found:' },
+        { type: 'tool_use', id: 'tool1', name: 'Grep', input: { pattern: 'error' } },
+      ];
+
+      inputFile = createTempJsonl([
+        { type: 'assistant', message: { content: mixedContent } },
+      ]);
+
+      outputFile = preprocessTranscript(inputFile, { truncateLines: 30 });
+      const result = readJsonl(outputFile);
+
+      assert.strictEqual(result.length, 1);
+      assert.strictEqual(result[0].content.length, 3);
+
+      // Thinking: signature stripped
+      assert.strictEqual(result[0].content[0].type, 'thinking');
+      assert.strictEqual(result[0].content[0].signature, undefined);
+
+      // Text: unchanged
+      assert.strictEqual(result[0].content[1].type, 'text');
+      assert.strictEqual(result[0].content[1].text, 'Here is what I found:');
+
+      // Tool use: id stripped
+      assert.strictEqual(result[0].content[2].type, 'tool_use');
+      assert.strictEqual(result[0].content[2].id, undefined);
+      assert.strictEqual(result[0].content[2].name, 'Grep');
     });
   });
 
@@ -206,7 +356,7 @@ describe('preprocessTranscript', () => {
         outputFile = preprocessTranscript(inputFile, { truncateLines: 30 });
         const result = readJsonl(outputFile);
 
-        const outputContent = result[0].message.content[0].content;
+        const outputContent = result[0].content[0].content;
         const outputLines = outputContent.split('\n');
 
         // Should be 30 + 3 (marker lines) + 30 = 63 lines total
@@ -232,7 +382,7 @@ describe('preprocessTranscript', () => {
         outputFile = preprocessTranscript(inputFile, { truncateLines: 30 });
         const result = readJsonl(outputFile);
 
-        const outputContent = result[0].message.content[0].content;
+        const outputContent = result[0].content[0].content;
         const outputLines = outputContent.split('\n');
 
         // First 30 lines preserved
@@ -259,7 +409,7 @@ describe('preprocessTranscript', () => {
         outputFile = preprocessTranscript(inputFile, { truncateLines: 30 });
         const result = readJsonl(outputFile);
 
-        const outputContent = result[0].message.content[0].content;
+        const outputContent = result[0].content[0].content;
 
         // Should contain marker indicating 40 lines were truncated
         assert.ok(outputContent.includes('truncated 40 lines'));
@@ -280,7 +430,7 @@ describe('preprocessTranscript', () => {
         outputFile = preprocessTranscript(inputFile, { truncateLines: 30 });
         const result = readJsonl(outputFile);
 
-        const outputContent = result[0].message.content[0].content;
+        const outputContent = result[0].content[0].content;
         const outputLines = outputContent.split('\n');
 
         assert.strictEqual(outputLines.length, 50);
@@ -304,7 +454,7 @@ describe('preprocessTranscript', () => {
         outputFile = preprocessTranscript(inputFile, { truncateLines: 30 });
         const result = readJsonl(outputFile);
 
-        const textItem = result[0].message.content[0].content[0];
+        const textItem = result[0].content[0].content[0];
         const outputLines = textItem.text.split('\n');
 
         // Should be truncated to 63 lines (30 + 3 marker + 30)
@@ -328,7 +478,7 @@ describe('preprocessTranscript', () => {
         outputFile = preprocessTranscript(inputFile, { truncateLines: 30 });
         const result = readJsonl(outputFile);
 
-        const outputContent = result[0].message.content[0].content;
+        const outputContent = result[0].content[0].content;
 
         assert.strictEqual(outputContent.length, 2);
         assert.strictEqual(outputContent[0].type, 'image');
@@ -350,7 +500,7 @@ describe('preprocessTranscript', () => {
         outputFile = preprocessTranscript(inputFile, { truncateLines: 30 });
         const result = readJsonl(outputFile);
 
-        const textItem = result[0].message.content[0].content[0];
+        const textItem = result[0].content[0].content[0];
         assert.strictEqual(textItem.text, 'line 1\nline 2\nline 3');
       });
     });
@@ -498,7 +648,7 @@ describe('preprocessTranscript', () => {
       outputFile = preprocessTranscript(inputFile, { truncateLines: 30 });
       const result = readJsonl(outputFile);
 
-      const outputContent = result[0].message.content[0].content;
+      const outputContent = result[0].content[0].content;
 
       // Should be truncated and contain the marker
       assert.ok(outputContent.length < longLine.length, 'content should be truncated');
@@ -521,7 +671,7 @@ describe('preprocessTranscript', () => {
       outputFile = preprocessTranscript(inputFile, { truncateLines: 30 });
       const result = readJsonl(outputFile);
 
-      const outputContent = result[0].message.content[0].content;
+      const outputContent = result[0].content[0].content;
 
       // Should not be truncated
       assert.strictEqual(outputContent.length, shortLine.length);
@@ -543,7 +693,7 @@ describe('preprocessTranscript', () => {
       outputFile = preprocessTranscript(inputFile, { truncateLines: 30 });
       const result = readJsonl(outputFile);
 
-      const outputContent = result[0].message.content[0].content;
+      const outputContent = result[0].content[0].content;
 
       assert.ok(outputContent.length < minifiedJS.length, 'minified JS should be truncated');
       assert.ok(outputContent.startsWith('function a(){'), 'should preserve start');

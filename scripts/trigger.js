@@ -331,83 +331,123 @@ function truncateText(text, truncateLines) {
 }
 
 /**
- * Process a single content item (tool_result) for truncation
+ * Process a single content item, stripping unnecessary metadata
+ * - text: kept as-is
+ * - thinking: strip signature, keep thinking content
+ * - tool_use: keep name and input only
+ * - tool_result: strip tool_use_id, truncate content
  * @param {Object} item - Content item from message.content array
  * @param {number} truncateLines - Number of lines to keep at start and end
  * @returns {Object} - Processed content item
  */
 function processContentItem(item, truncateLines) {
-  if (item.type !== 'tool_result') {
+  if (!item || !item.type) {
     return item;
   }
 
-  // Handle string content
-  if (typeof item.content === 'string') {
-    return {
-      ...item,
-      content: truncateText(item.content, truncateLines),
-    };
-  }
+  switch (item.type) {
+    case 'text':
+      // Keep text blocks as-is
+      return { type: 'text', text: item.text };
 
-  // Handle array content (multi-part tool results)
-  if (Array.isArray(item.content)) {
-    return {
-      ...item,
-      content: item.content.map((part) => {
-        if (part.type === 'text' && typeof part.text === 'string') {
-          return {
-            ...part,
-            text: truncateText(part.text, truncateLines),
-          };
-        }
-        return part;
-      }),
-    };
-  }
+    case 'thinking':
+      // Strip signature, keep thinking content only
+      return { type: 'thinking', thinking: item.thinking };
 
-  return item;
+    case 'tool_use':
+      // Keep name and input for context (what was attempted)
+      return { type: 'tool_use', name: item.name, input: item.input };
+
+    case 'tool_result': {
+      // Strip tool_use_id, process content for truncation
+      const processedContent = processToolResultContent(item.content, truncateLines);
+      return { type: 'tool_result', content: processedContent };
+    }
+
+    default:
+      // For unknown types, return minimal version
+      return item;
+  }
 }
 
 /**
+ * Process tool_result content (can be string or array)
+ * @param {string|Array} content - The tool result content
+ * @param {number} truncateLines - Number of lines to keep
+ * @returns {string|Array} - Processed content
+ */
+function processToolResultContent(content, truncateLines) {
+  // Handle string content
+  if (typeof content === 'string') {
+    return truncateText(content, truncateLines);
+  }
+
+  // Handle array content (multi-part tool results)
+  if (Array.isArray(content)) {
+    return content.map((part) => {
+      if (part.type === 'text' && typeof part.text === 'string') {
+        return { type: 'text', text: truncateText(part.text, truncateLines) };
+      }
+      return part;
+    });
+  }
+
+  return content;
+}
+
+// Entry types to filter out completely (not relevant for skill extraction)
+const SKIP_ENTRY_TYPES = [
+  'file-history-snapshot',  // File state snapshots
+  'queue-operation',        // Queue management
+  'summary',                // Compaction summaries
+  'system',                 // System prompts (already known context)
+];
+
+/**
  * Process a single JSONL entry (one line from transcript)
- * - Filters out unwanted message types
- * - Removes redundant fields
- * - Truncates large tool results
+ * Aggressively strips all metadata, keeping only what skill extraction needs:
+ * - type: user/assistant to know who said what
+ * - content: the actual conversation (text, tool_use, tool_result, thinking)
+ *
  * @param {Object} entry - Parsed JSON entry
  * @param {number} truncateLines - Number of lines to keep at start and end
  * @returns {Object|null} - Processed entry, or null if should be filtered out
  */
 function processEntry(entry, truncateLines) {
-  // Filter out unwanted message types
-  if (entry.type === 'file-history-snapshot' || entry.type === 'queue-operation') {
+  // Filter out unwanted entry types
+  if (SKIP_ENTRY_TYPES.includes(entry.type)) {
     return null;
   }
 
-  // Create a new object without redundant fields
-  const { userType, isSidechain, cwd, version, gitBranch, ...rest } = entry;
+  // Get the content from message.content
+  const rawContent = entry.message?.content;
 
-  // Remove message.role if message exists
-  if (rest.message) {
-    const { role, ...messageRest } = rest.message;
-    rest.message = messageRest;
-
-    // Process content array for truncation
-    if (Array.isArray(rest.message.content)) {
-      rest.message.content = rest.message.content.map((item) =>
-        processContentItem(item, truncateLines)
-      );
-    }
+  // Process content array to strip signatures, IDs, and truncate
+  let processedContent;
+  if (Array.isArray(rawContent)) {
+    processedContent = rawContent.map((item) => processContentItem(item, truncateLines));
+  } else {
+    // String content (simple messages)
+    processedContent = rawContent;
   }
 
-  return rest;
+  // Return only essential fields
+  return {
+    type: entry.type,
+    content: processedContent,
+  };
 }
 
 /**
- * Preprocess transcript to reduce token usage
- * - Removes file-history-snapshot and queue-operation entries
- * - Strips redundant per-message fields (userType, isSidechain, cwd, version, gitBranch)
- * - Removes message.role (redundant with type)
- * - Truncates large text content in tool results
+ * Preprocess transcript to reduce token usage for skill extraction (~80% reduction)
+ *
+ * Aggressively strips all metadata, keeping only:
+ * - type: user/assistant to know who said what
+ * - content: text, tool_use (name+input), tool_result (content), thinking (without signature)
+ *
+ * Filters out entry types: file-history-snapshot, queue-operation, summary, system
+ * Strips from content: thinking.signature, tool_use_id
+ * Truncates large tool results
  *
  * @param {string} inputFilePath - Path to the input JSONL transcript
  * @param {{ truncateLines: number }} options - Processing options

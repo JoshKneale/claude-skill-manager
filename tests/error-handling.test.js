@@ -46,9 +46,10 @@ describe('error handling', () => {
   describe('JSON parse errors in transcript', () => {
     it('should skip malformed JSON lines in preprocessTranscript', () => {
       // Create transcript with mixed valid and invalid JSON lines
+      // Note: summary entries are now filtered out, so we only expect user/assistant
       const transcriptFile = path.join(tempDir, 'malformed.jsonl');
       const content = [
-        '{"type":"summary","message":{"content":"valid line 1"}}',
+        '{"type":"user","message":{"content":"valid line 1"}}',
         'not valid json at all',
         '{"type":"user","message":{"content":"valid line 2"}}',
         '{incomplete json',
