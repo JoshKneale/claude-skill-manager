@@ -81,7 +81,9 @@ Read the template files to understand the expected structure. Key sections:
 
 **SKILL.md must include:**
 - Frontmatter with `name` and specific `description` (with trigger phrases)
-- Verified date and source session
+- Verified date (`verified`) and source session (`source`)
+- Version number (`version: 1.0.0`)
+- Usage tracking fields: `created: YYYY-MM-DD`, `last_used: null`, `usage_count: 0`
 - When to Use (specific scenarios)
 - Instructions (concrete, not vague)
 - Failed Attempts table (most valuable section)

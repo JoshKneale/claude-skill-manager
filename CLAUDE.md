@@ -20,7 +20,8 @@ hooks/
 └── hooks.json           # Registers SessionEnd hook
 
 scripts/
-└── trigger.js           # Node.js script that hooks invoke (cross-platform, launches claude)
+├── trigger.js           # Node.js script that hooks invoke (cross-platform, launches claude)
+└── usage-tracker.js     # Tracks skill usage and retires unused skills
 
 templates/skill/         # Templates for generated skill files
 ├── SKILL.md
@@ -50,6 +51,8 @@ Environment variables to customize behavior:
 | `SKILL_MANAGER_TRUNCATE_LINES` | `30` | Lines to keep at start/end of large tool results (reduces tokens) |
 | `SKILL_MANAGER_MIN_LINES` | `10` | Skip transcripts with fewer than N lines (filters warmup sessions) |
 | `SKILL_MANAGER_SAVE_OUTPUT` | `0` | Set to `1` to save Claude output to individual files in `outputs/` |
+| `SKILL_MANAGER_RETIREMENT_SESSIONS` | `100` | Sessions without use before skill is retired to `.retired/` |
+| `SKILL_MANAGER_TRACK_USAGE` | `1` | Set to `0` to disable usage tracking and retirement |
 
 ## Testing Changes
 
@@ -101,6 +104,7 @@ ls -la ~/.claude/skill-manager/outputs/
 
 - **`commands/skill-manager.md`**: The prompt that drives skill extraction. Contains all the logic for identifying patterns, rating importance, and writing skill files.
 - **`scripts/trigger.js`**: Hook handler. Must exit quickly (spawns detached child process for background work).
+- **`scripts/usage-tracker.js`**: Tracks skill usage in transcripts and retires skills unused for 100+ sessions.
 - **`templates/skill/`**: Reference templates. Skills must follow this structure with frontmatter, failed attempts table, version history.
 
 ## Skill Structure

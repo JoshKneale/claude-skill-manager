@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { trackUsageInTranscript, retireUnusedSkills } from './usage-tracker.js';
 
 // =============================================================================
 // Configuration Loading
@@ -28,10 +29,20 @@ export function loadConfig() {
   const saveOutputEnv = (process.env.SKILL_MANAGER_SAVE_OUTPUT || '').toLowerCase();
   const saveOutput = saveOutputEnv === '1' || saveOutputEnv === 'true' || saveOutputEnv === 'yes';
 
+  // Parse RETIREMENT_SESSIONS with validation (must be positive)
+  const retirementSessions = parseInt(process.env.SKILL_MANAGER_RETIREMENT_SESSIONS, 10);
+  const validRetirementSessions = retirementSessions > 0 ? retirementSessions : 100;
+
+  // Parse TRACK_USAGE - disabled with '0', 'false', 'no' (case-insensitive)
+  const trackUsageEnv = (process.env.SKILL_MANAGER_TRACK_USAGE || '1').toLowerCase();
+  const trackUsage = trackUsageEnv !== '0' && trackUsageEnv !== 'false' && trackUsageEnv !== 'no';
+
   return {
     TRUNCATE_LINES: validTruncateLines,
     MIN_LINES: validMinLines,
     SAVE_OUTPUT: saveOutput,
+    RETIREMENT_SESSIONS: validRetirementSessions,
+    TRACK_USAGE: trackUsage,
   };
 }
 
@@ -718,6 +729,17 @@ export async function main({ transcriptPath: rawTranscriptPath, log, config, sta
     return 0;
   }
 
+  // Track skill usage in this transcript
+  if (config.TRACK_USAGE) {
+    const usageResult = trackUsageInTranscript(transcriptPath, log);
+    if (usageResult.skillsFound.length > 0) {
+      log(`Usage tracking: found ${usageResult.skillsFound.length} skill references`);
+      for (const skill of usageResult.skillsFound) {
+        log(`  - ${skill}`);
+      }
+    }
+  }
+
   // Process the transcript
   const result = await processTranscript({
     transcriptPath,
@@ -726,6 +748,14 @@ export async function main({ transcriptPath: rawTranscriptPath, log, config, sta
     outputsDir,
     spawner,
   });
+
+  // Retire unused skills
+  if (config.TRACK_USAGE) {
+    const retireResult = retireUnusedSkills(config.RETIREMENT_SESSIONS, log);
+    if (retireResult.retired.length > 0) {
+      log(`Retired ${retireResult.retired.length} unused skills`);
+    }
+  }
 
   log('=== Processing complete ===');
   return result.success ? 0 : 1;

@@ -4,6 +4,12 @@ description: |
   {{WHAT_IT_DOES}}. {{WHEN_TO_USE}}.
   Use when: {{SPECIFIC_TRIGGERS}}.
   Example triggers: "{{USER_PHRASE_1}}", "{{USER_PHRASE_2}}".
+verified: {{DATE}}
+source: session-{{SESSION_ID}}
+version: 1.0.0
+created: {{DATE}}
+last_used: null
+usage_count: 0
 ---
 
 # {{SKILL_DISPLAY_NAME}}

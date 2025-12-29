@@ -15,6 +15,8 @@ describe('loadConfig', () => {
     'SKILL_MANAGER_TRUNCATE_LINES',
     'SKILL_MANAGER_MIN_LINES',
     'SKILL_MANAGER_SAVE_OUTPUT',
+    'SKILL_MANAGER_RETIREMENT_SESSIONS',
+    'SKILL_MANAGER_TRACK_USAGE',
   ];
 
   beforeEach(() => {
@@ -133,5 +135,83 @@ describe('loadConfig', () => {
     process.env.SKILL_MANAGER_SAVE_OUTPUT = 'false';
     const config = loadConfig();
     assert.strictEqual(config.SAVE_OUTPUT, false);
+  });
+
+  // RETIREMENT_SESSIONS tests
+  it('should use default RETIREMENT_SESSIONS of 100 when env var not set', () => {
+    const config = loadConfig();
+    assert.strictEqual(config.RETIREMENT_SESSIONS, 100);
+  });
+
+  it('should override RETIREMENT_SESSIONS from SKILL_MANAGER_RETIREMENT_SESSIONS env var', () => {
+    process.env.SKILL_MANAGER_RETIREMENT_SESSIONS = '50';
+    const config = loadConfig();
+    assert.strictEqual(config.RETIREMENT_SESSIONS, 50);
+  });
+
+  it('should use default RETIREMENT_SESSIONS for zero', () => {
+    process.env.SKILL_MANAGER_RETIREMENT_SESSIONS = '0';
+    const config = loadConfig();
+    assert.strictEqual(config.RETIREMENT_SESSIONS, 100, 'zero should fall back to default');
+  });
+
+  it('should use default RETIREMENT_SESSIONS for negative values', () => {
+    process.env.SKILL_MANAGER_RETIREMENT_SESSIONS = '-10';
+    const config = loadConfig();
+    assert.strictEqual(config.RETIREMENT_SESSIONS, 100, 'negative values should fall back to default');
+  });
+
+  it('should use default RETIREMENT_SESSIONS for invalid values', () => {
+    process.env.SKILL_MANAGER_RETIREMENT_SESSIONS = 'never';
+    const config = loadConfig();
+    assert.strictEqual(config.RETIREMENT_SESSIONS, 100, 'invalid values should fall back to default');
+  });
+
+  // TRACK_USAGE tests
+  it('should use default TRACK_USAGE of true when env var not set', () => {
+    const config = loadConfig();
+    assert.strictEqual(config.TRACK_USAGE, true);
+  });
+
+  it('should set TRACK_USAGE to false when env var is "0"', () => {
+    process.env.SKILL_MANAGER_TRACK_USAGE = '0';
+    const config = loadConfig();
+    assert.strictEqual(config.TRACK_USAGE, false);
+  });
+
+  it('should set TRACK_USAGE to false when env var is "false"', () => {
+    process.env.SKILL_MANAGER_TRACK_USAGE = 'false';
+    const config = loadConfig();
+    assert.strictEqual(config.TRACK_USAGE, false);
+  });
+
+  it('should set TRACK_USAGE to false when env var is "FALSE" (case-insensitive)', () => {
+    process.env.SKILL_MANAGER_TRACK_USAGE = 'FALSE';
+    const config = loadConfig();
+    assert.strictEqual(config.TRACK_USAGE, false);
+  });
+
+  it('should set TRACK_USAGE to false when env var is "no"', () => {
+    process.env.SKILL_MANAGER_TRACK_USAGE = 'no';
+    const config = loadConfig();
+    assert.strictEqual(config.TRACK_USAGE, false);
+  });
+
+  it('should keep TRACK_USAGE as true for "1"', () => {
+    process.env.SKILL_MANAGER_TRACK_USAGE = '1';
+    const config = loadConfig();
+    assert.strictEqual(config.TRACK_USAGE, true);
+  });
+
+  it('should keep TRACK_USAGE as true for "yes"', () => {
+    process.env.SKILL_MANAGER_TRACK_USAGE = 'yes';
+    const config = loadConfig();
+    assert.strictEqual(config.TRACK_USAGE, true);
+  });
+
+  it('should keep TRACK_USAGE as true for unrecognized values', () => {
+    process.env.SKILL_MANAGER_TRACK_USAGE = 'enabled';
+    const config = loadConfig();
+    assert.strictEqual(config.TRACK_USAGE, true, 'unrecognized values should keep tracking enabled');
   });
 });
