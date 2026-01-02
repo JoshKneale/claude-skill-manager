@@ -3,6 +3,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { findSimilarSkillsStrict } from './similarity.js';
 
 // =============================================================================
 // Configuration
@@ -312,6 +313,160 @@ export function trackUsageInTranscript(transcriptPath, logFn) {
 }
 
 // =============================================================================
+// Skill Consolidation
+// =============================================================================
+
+/**
+ * Extract valuable content from a skill for consolidation
+ * @param {string} skillDirPath - Path to the skill directory
+ * @returns {Object} - Extracted content { failedAttempts, keyInsight, troubleshooting, examples }
+ */
+export function extractConsolidatableContent(skillDirPath) {
+  const content = {
+    failedAttempts: null,
+    troubleshooting: null,
+    examples: null,
+    keyInsight: null,
+  };
+
+  // Read SKILL.md
+  const skillPath = path.join(skillDirPath, 'SKILL.md');
+  if (fs.existsSync(skillPath)) {
+    const skillContent = fs.readFileSync(skillPath, 'utf8');
+
+    // Extract Failed Attempts section
+    const failedMatch = skillContent.match(/## Failed Attempts\n\n([\s\S]*?)(?=\n##|$)/);
+    if (failedMatch && failedMatch[1].trim()) {
+      content.failedAttempts = failedMatch[1].trim();
+    }
+
+    // Extract first paragraph after "## Instructions" as key insight
+    const instructMatch = skillContent.match(/## Instructions\n\n([\s\S]*?)(?=\n##|\n\n)/);
+    if (instructMatch && instructMatch[1].trim()) {
+      content.keyInsight = instructMatch[1].trim();
+    }
+  }
+
+  // Read troubleshooting.md
+  const troublePath = path.join(skillDirPath, 'troubleshooting.md');
+  if (fs.existsSync(troublePath)) {
+    content.troubleshooting = fs.readFileSync(troublePath, 'utf8');
+  }
+
+  // Read examples.md
+  const examplesPath = path.join(skillDirPath, 'examples.md');
+  if (fs.existsSync(examplesPath)) {
+    content.examples = fs.readFileSync(examplesPath, 'utf8');
+  }
+
+  return content;
+}
+
+/**
+ * Append consolidated content to a target skill
+ * @param {string} targetSkillDir - Path to target skill directory
+ * @param {string} sourceSkillName - Name of skill being consolidated
+ * @param {Object} content - Content to append { failedAttempts, keyInsight, troubleshooting, examples }
+ * @param {function} logFn - Logging function
+ */
+export function appendConsolidatedContent(targetSkillDir, sourceSkillName, content, logFn) {
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Append to SKILL.md if there's content to add
+  const skillPath = path.join(targetSkillDir, 'SKILL.md');
+  if (fs.existsSync(skillPath) && (content.failedAttempts || content.keyInsight)) {
+    let skillContent = fs.readFileSync(skillPath, 'utf8');
+
+    // Build consolidation block
+    let consolidationBlock = `
+---
+
+## Consolidated from \`${sourceSkillName}\` (${today})
+
+`;
+    if (content.keyInsight) {
+      consolidationBlock += `### Key Insight\n${content.keyInsight}\n\n`;
+    }
+    if (content.failedAttempts) {
+      consolidationBlock += `### Additional Failed Attempts\n${content.failedAttempts}\n`;
+    }
+
+    // Insert before ## Version History, or append at end
+    if (skillContent.includes('## Version History')) {
+      skillContent = skillContent.replace('## Version History', consolidationBlock + '\n## Version History');
+    } else {
+      skillContent += consolidationBlock;
+    }
+
+    fs.writeFileSync(skillPath, skillContent);
+    logFn(`  Added consolidated content to SKILL.md`);
+  }
+
+  // Append to examples.md
+  if (content.examples) {
+    const examplesPath = path.join(targetSkillDir, 'examples.md');
+    if (fs.existsSync(examplesPath)) {
+      let examplesContent = fs.readFileSync(examplesPath, 'utf8');
+      examplesContent += `\n\n<!-- Consolidated from ${sourceSkillName} on ${today} -->\n${content.examples}`;
+      fs.writeFileSync(examplesPath, examplesContent);
+      logFn(`  Added consolidated examples`);
+    }
+  }
+
+  // Append to troubleshooting.md
+  if (content.troubleshooting) {
+    const troublePath = path.join(targetSkillDir, 'troubleshooting.md');
+    if (fs.existsSync(troublePath)) {
+      let troubleContent = fs.readFileSync(troublePath, 'utf8');
+      troubleContent += `\n\n<!-- Consolidated from ${sourceSkillName} on ${today} -->\n${content.troubleshooting}`;
+      fs.writeFileSync(troublePath, troubleContent);
+      logFn(`  Added consolidated troubleshooting`);
+    }
+  }
+}
+
+/**
+ * Attempt to consolidate a skill into a similar active skill before retirement
+ * Uses strict matching (Prefix >= 3 AND Jaccard >= 0.30) to be conservative
+ *
+ * @param {Object} skill - Skill to potentially consolidate { name, dirPath, ... }
+ * @param {Array} activeSkills - List of all active skills
+ * @param {function} logFn - Logging function
+ * @returns {string|null} - Name of skill consolidated into, or null if no match
+ */
+export function attemptConsolidation(skill, activeSkills, logFn) {
+  // Get names of active skills (excluding the one being retired)
+  const activeNames = activeSkills
+    .filter(s => s.name !== skill.name)
+    .map(s => s.name);
+
+  // Find similar skills using strict algorithm
+  const matches = findSimilarSkillsStrict(skill.name, activeNames);
+
+  if (matches.length === 0) {
+    return null;
+  }
+
+  // Use the best match
+  const bestMatch = matches[0];
+  const targetSkill = activeSkills.find(s => s.name === bestMatch.name);
+
+  if (!targetSkill) {
+    return null;
+  }
+
+  logFn(`Consolidating ${skill.name} into ${bestMatch.name} (Jaccard: ${bestMatch.jaccard.toFixed(2)}, Prefix: ${bestMatch.prefix})`);
+
+  // Extract content from retiring skill
+  const content = extractConsolidatableContent(skill.dirPath);
+
+  // Append to target skill
+  appendConsolidatedContent(targetSkill.dirPath, skill.name, content, logFn);
+
+  return bestMatch.name;
+}
+
+// =============================================================================
 // Skill Retirement
 // =============================================================================
 
@@ -326,19 +481,29 @@ export function getSessionsSinceUse(frontmatter) {
 
 /**
  * Retire skills that haven't been used in the specified number of sessions
+ * Attempts to consolidate valuable content into similar active skills before retirement.
+ *
  * @param {number} retirementSessions - Number of sessions without use before retirement
  * @param {function} logFn - Logging function
- * @returns {{ retired: string[] }}
+ * @returns {{ retired: string[], consolidated: Array<{from: string, into: string}> }}
  */
 export function retireUnusedSkills(retirementSessions, logFn) {
   const skills = getAllSkills();
   const retired = [];
+  const consolidated = [];
   const retiredDir = getRetiredDir();
 
   for (const skill of skills) {
     const sessionsSinceUse = getSessionsSinceUse(skill.frontmatter);
 
     if (sessionsSinceUse > retirementSessions) {
+      // Attempt consolidation before retirement
+      const consolidatedInto = attemptConsolidation(skill, skills, logFn);
+
+      if (consolidatedInto) {
+        consolidated.push({ from: skill.name, into: consolidatedInto });
+      }
+
       // Ensure retired directory exists
       fs.mkdirSync(retiredDir, { recursive: true });
 
@@ -357,12 +522,13 @@ export function retireUnusedSkills(retirementSessions, logFn) {
       try {
         fs.renameSync(skill.dirPath, targetPath);
         retired.push(skill.name);
-        logFn(`Retired skill: ${skill.name} (unused for ${sessionsSinceUse} sessions)`);
+        const consolidationNote = consolidatedInto ? ` [consolidated into ${consolidatedInto}]` : '';
+        logFn(`Retired skill: ${skill.name} (unused for ${sessionsSinceUse} sessions)${consolidationNote}`);
       } catch (err) {
         logFn(`Warning: Failed to retire skill ${skill.name}: ${err.message}`);
       }
     }
   }
 
-  return { retired };
+  return { retired, consolidated };
 }

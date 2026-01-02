@@ -1,6 +1,6 @@
 ---
 description: Extract reusable skills from a conversation transcript
-allowed-tools: Read, Write, Glob, Grep
+allowed-tools: Read, Write, Glob, Grep, Bash
 argument-hint: [transcript_path]
 ---
 
@@ -52,18 +52,60 @@ For each potential skill:
 
 Only extract skills rated "medium" or higher. Maximum 3 skills per session.
 
-## Step 4: Check for Existing Skills
+## Step 4: Check for Existing Skills (MANDATORY)
 
-Before creating a skill:
+Before creating ANY skill, you MUST run the similarity checker to prevent duplicate skills.
 
-1. Use Glob to find existing skills: `~/.claude/skills/*/SKILL.md`
-2. Read each existing skill's name and description
-3. Determine:
-   - **Exact match**: Same skill exists → ENHANCE it (add examples, failures, troubleshooting)
-   - **Related**: Similar topic → Consider if this is a new skill or enhancement
-   - **New**: Nothing similar → Create new skill
+### Step 4a: Run Similarity Check
 
-**Enhancement is preferred over creation.** Growing existing skills with new examples and failure cases makes them more valuable.
+For each potential new skill, run:
+
+```bash
+node ~/.claude/plugins/skill-manager/scripts/similarity.js wide "<proposed-skill-name>"
+```
+
+This returns a JSON object with similar existing skills. Interpret results:
+
+| Jaccard | Prefix | Action |
+|---------|--------|--------|
+| >= 0.50 | any | **MUST** enhance existing skill, do not create new |
+| >= 0.40 | any | Strongly prefer enhancement; only create new if genuinely distinct |
+| >= 0.30 | >= 3 | Same family (e.g., `rust-test-*`) - enhance existing or justify why distinct |
+| < 0.30 | < 3 | Safe to create new skill |
+
+### Step 4b: Read Matched Skills
+
+If the similarity checker returns matches:
+
+1. Read the matched skill(s) SKILL.md files
+2. Compare your new insight against existing content
+3. Decide: enhance existing OR create new (with justification)
+
+### Step 4c: Document Your Decision
+
+For every skill you write, include in your output:
+
+```
+SIMILARITY CHECK: <proposed-name>
+  Command: node ~/.claude/plugins/skill-manager/scripts/similarity.js wide "<name>"
+  Matches: <list of matches with scores, or "none">
+  Decision: <enhance existing | create new>
+  Rationale: <one sentence explaining why>
+```
+
+### When to Enhance vs Create
+
+- **Enhance** when the new insight:
+  - Adds examples to an existing pattern
+  - Documents a new failure mode for a known problem
+  - Provides additional troubleshooting for a covered topic
+
+- **Create new** when:
+  - No matches returned (similarity < 0.30 and prefix < 3)
+  - Matches exist but cover a genuinely different problem
+  - The insight requires fundamentally different instructions
+
+**Enhancement is strongly preferred over creation.** Growing existing skills with new examples and failure cases makes them more valuable than creating many narrow skills.
 
 ## Step 5: Write or Enhance Skills
 
@@ -165,12 +207,14 @@ For each new skill:
 - Path: `.claude/skills/<name>/`
 - Description: [Brief description]
 - Key value: [Why this skill is useful - what problem it prevents]
+- Similarity check: [Output from similarity checker showing no conflicts]
 
 ### Skills Enhanced
 For each enhanced skill:
 - Path: `.claude/skills/<name>/`
 - What was added: [New examples, failures, troubleshooting]
 - Version: [Old] → [New]
+- Similarity check: [Why this was enhancement rather than new skill]
 
 ### Skills Skipped
 For each potential skill not extracted:
