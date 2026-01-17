@@ -190,7 +190,24 @@ export function updateSkillFrontmatter(filePath, updates) {
 // =============================================================================
 
 /**
+ * Check if a skill was created by this tool (has 'source' field in frontmatter)
+ * Skills created by claude-skill-manager have a source field with the session UUID
+ * @param {string} skillPath - Path to the skill's SKILL.md file
+ * @returns {boolean} - True if skill was created by this tool
+ */
+export function isToolCreatedSkill(skillPath) {
+  try {
+    const content = fs.readFileSync(skillPath, 'utf8');
+    const parsed = parseFrontmatter(content);
+    return Boolean(parsed && typeof parsed.frontmatter.source === 'string' && parsed.frontmatter.source.length > 0);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Get all skills from the skills directory
+ * Only returns skills created by this tool (those with 'source' field in frontmatter)
  * @returns {Array<{ name: string, path: string, frontmatter: Object }>}
  */
 export function getAllSkills() {
@@ -235,7 +252,10 @@ export function getAllSkills() {
     });
   }
 
-  return skills;
+  // Filter to only include skills created by this tool (have source field)
+  return skills.filter(skill =>
+    typeof skill.frontmatter.source === 'string' && skill.frontmatter.source.length > 0
+  );
 }
 
 // =============================================================================

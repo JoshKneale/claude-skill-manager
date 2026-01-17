@@ -14,6 +14,7 @@ import {
   serializeFrontmatter,
   updateSkillFrontmatter,
   getAllSkills,
+  isToolCreatedSkill,
   createSkillPattern,
   trackUsageInTranscript,
   getSessionsSinceUse,
@@ -48,15 +49,21 @@ function cleanupTempDir(dir) {
  * Create a mock skill directory with SKILL.md
  * @param {string} skillsDir - Parent skills directory
  * @param {string} name - Skill name
- * @param {Object} frontmatter - Frontmatter object
+ * @param {Object} frontmatter - Frontmatter object (source field added automatically for tool-created skills)
  * @returns {string} - Path to skill directory
  */
 function createMockSkill(skillsDir, name, frontmatter) {
   const skillDir = path.join(skillsDir, name);
   fs.mkdirSync(skillDir, { recursive: true });
 
+  // Add source field if not explicitly provided (simulates tool-created skill)
+  const frontmatterWithSource = {
+    source: 'test-session-uuid-12345',  // Default source for test skills
+    ...frontmatter,
+  };
+
   const content = `---
-${serializeFrontmatter(frontmatter)}
+${serializeFrontmatter(frontmatterWithSource)}
 ---
 
 # ${name}
@@ -432,6 +439,105 @@ name: old-skill
     fs.rmSync(path.join(tempDir, '.claude', 'skills'), { recursive: true });
     const skills = getAllSkills();
     assert.deepStrictEqual(skills, []);
+  });
+
+  it('should exclude skills without source field (non-tool-created)', () => {
+    const skillsDir = path.join(tempDir, '.claude', 'skills');
+
+    // Create skill WITH source field (tool-created - should be included)
+    createMockSkill(skillsDir, 'tool-created-skill', {
+      name: 'tool-created-skill',
+      source: 'abc123-session-uuid',
+    });
+
+    // Create skill WITHOUT source field (manually created - should be excluded)
+    const manualSkillDir = path.join(skillsDir, 'manual-skill');
+    fs.mkdirSync(manualSkillDir, { recursive: true });
+    fs.writeFileSync(path.join(manualSkillDir, 'SKILL.md'), `---
+name: manual-skill
+version: 1.0.0
+---
+
+# Manual Skill
+
+This skill was created manually.
+`);
+
+    const skills = getAllSkills();
+
+    // Should only find the tool-created skill
+    assert.strictEqual(skills.length, 1);
+    assert.strictEqual(skills[0].name, 'tool-created-skill');
+  });
+});
+
+// =============================================================================
+// isToolCreatedSkill Tests
+// =============================================================================
+
+describe('isToolCreatedSkill', () => {
+  let tempDir;
+
+  beforeEach(() => {
+    tempDir = createTempDir();
+  });
+
+  afterEach(() => {
+    cleanupTempDir(tempDir);
+  });
+
+  it('should return true for skill with source field', () => {
+    const skillPath = path.join(tempDir, 'SKILL.md');
+    fs.writeFileSync(skillPath, `---
+name: test-skill
+source: abc123-session-uuid
+---
+
+# Test Skill
+`);
+
+    assert.strictEqual(isToolCreatedSkill(skillPath), true);
+  });
+
+  it('should return false for skill without source field', () => {
+    const skillPath = path.join(tempDir, 'SKILL.md');
+    fs.writeFileSync(skillPath, `---
+name: test-skill
+version: 1.0.0
+---
+
+# Test Skill
+`);
+
+    assert.strictEqual(isToolCreatedSkill(skillPath), false);
+  });
+
+  it('should return false for skill with empty source field', () => {
+    const skillPath = path.join(tempDir, 'SKILL.md');
+    fs.writeFileSync(skillPath, `---
+name: test-skill
+source:
+---
+
+# Test Skill
+`);
+
+    assert.strictEqual(isToolCreatedSkill(skillPath), false);
+  });
+
+  it('should return false for non-existent file', () => {
+    const skillPath = path.join(tempDir, 'nonexistent.md');
+    assert.strictEqual(isToolCreatedSkill(skillPath), false);
+  });
+
+  it('should return false for file without frontmatter', () => {
+    const skillPath = path.join(tempDir, 'SKILL.md');
+    fs.writeFileSync(skillPath, `# Test Skill
+
+No frontmatter here.
+`);
+
+    assert.strictEqual(isToolCreatedSkill(skillPath), false);
   });
 });
 

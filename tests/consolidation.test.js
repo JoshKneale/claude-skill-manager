@@ -43,6 +43,7 @@ function createFullMockSkill(skillsDir, name, options = {}) {
   fs.mkdirSync(skillDir, { recursive: true });
 
   const frontmatter = {
+    source: 'test-session-uuid-12345',  // Default source for test skills (marks as tool-created)
     name,
     version: options.version || '1.0.0',
     sessions_since_use: options.sessions_since_use ?? 0,
