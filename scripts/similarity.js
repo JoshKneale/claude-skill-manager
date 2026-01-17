@@ -117,12 +117,7 @@ export function findSimilarSkillsStrict(proposedName, existingNames) {
  * @returns {string[]} - Array of skill directory names
  */
 function getExistingSkillNames() {
-  const homeDir = process.env.HOME || process.env.USERPROFILE;
-  if (!homeDir) {
-    return [];
-  }
-
-  const skillsDir = path.join(homeDir, '.claude', 'skills');
+  const skillsDir = path.join(process.cwd(), '.claude', 'skills');
 
   if (!fs.existsSync(skillsDir)) {
     return [];

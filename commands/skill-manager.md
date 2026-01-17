@@ -111,7 +111,7 @@ SIMILARITY CHECK: <proposed-name>
 
 ### New Skill Structure
 
-Create directory `~/.claude/skills/<skill-name>/` with three files. Use the templates in this plugin as your guide:
+Create directory `.claude/skills/<skill-name>/` with three files. Use the templates in this plugin as your guide:
 
 | File | Template | Purpose |
 |------|----------|---------|
@@ -190,7 +190,7 @@ Requirements:
 - Skills must include at least one of: failed attempts, troubleshooting, or concrete examples
 - Always include session attribution for traceability
 - Prefer enhancing existing skills over creating new ones
-- Write to user-level skills directory: `~/.claude/skills/`
+- Write to local skills directory: `.claude/skills/`
 - If no skills worth extracting, that's fine - explain why
 
 ## Output Summary

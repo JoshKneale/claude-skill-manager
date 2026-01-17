@@ -365,19 +365,19 @@ describe('getSessionsSinceUse', () => {
 
 describe('getAllSkills', () => {
   let tempDir;
-  let originalHome;
+  let originalCwd;
 
   beforeEach(() => {
     tempDir = createTempDir();
-    originalHome = process.env.HOME;
+    originalCwd = process.cwd();
     // Create mock .claude/skills structure
     const skillsDir = path.join(tempDir, '.claude', 'skills');
     fs.mkdirSync(skillsDir, { recursive: true });
-    process.env.HOME = tempDir;
+    process.chdir(tempDir);
   });
 
   afterEach(() => {
-    process.env.HOME = originalHome;
+    process.chdir(originalCwd);
     cleanupTempDir(tempDir);
   });
 
@@ -441,7 +441,7 @@ name: old-skill
 
 describe('trackUsageInTranscript', () => {
   let tempDir;
-  let originalHome;
+  let originalCwd;
   let logs = [];
 
   function mockLog(...args) {
@@ -450,15 +450,15 @@ describe('trackUsageInTranscript', () => {
 
   beforeEach(() => {
     tempDir = createTempDir();
-    originalHome = process.env.HOME;
+    originalCwd = process.cwd();
     const skillsDir = path.join(tempDir, '.claude', 'skills');
     fs.mkdirSync(skillsDir, { recursive: true });
-    process.env.HOME = tempDir;
+    process.chdir(tempDir);
     logs = [];
   });
 
   afterEach(() => {
-    process.env.HOME = originalHome;
+    process.chdir(originalCwd);
     cleanupTempDir(tempDir);
   });
 
@@ -532,7 +532,7 @@ describe('trackUsageInTranscript', () => {
 
 describe('retireUnusedSkills', () => {
   let tempDir;
-  let originalHome;
+  let originalCwd;
   let logs = [];
 
   function mockLog(...args) {
@@ -541,15 +541,15 @@ describe('retireUnusedSkills', () => {
 
   beforeEach(() => {
     tempDir = createTempDir();
-    originalHome = process.env.HOME;
+    originalCwd = process.cwd();
     const skillsDir = path.join(tempDir, '.claude', 'skills');
     fs.mkdirSync(skillsDir, { recursive: true });
-    process.env.HOME = tempDir;
+    process.chdir(tempDir);
     logs = [];
   });
 
   afterEach(() => {
-    process.env.HOME = originalHome;
+    process.chdir(originalCwd);
     cleanupTempDir(tempDir);
   });
 

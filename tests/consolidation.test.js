@@ -329,7 +329,7 @@ describe('appendConsolidatedContent', () => {
 
 describe('attemptConsolidation', () => {
   let tempDir;
-  let originalHome;
+  let originalCwd;
   let logs = [];
 
   function mockLog(...args) {
@@ -338,15 +338,15 @@ describe('attemptConsolidation', () => {
 
   beforeEach(() => {
     tempDir = createTempDir();
-    originalHome = process.env.HOME;
+    originalCwd = process.cwd();
     const skillsDir = path.join(tempDir, '.claude', 'skills');
     fs.mkdirSync(skillsDir, { recursive: true });
-    process.env.HOME = tempDir;
+    process.chdir(tempDir);
     logs = [];
   });
 
   afterEach(() => {
-    process.env.HOME = originalHome;
+    process.chdir(originalCwd);
     cleanupTempDir(tempDir);
   });
 
@@ -453,7 +453,7 @@ describe('attemptConsolidation', () => {
 
 describe('retireUnusedSkills with consolidation', () => {
   let tempDir;
-  let originalHome;
+  let originalCwd;
   let logs = [];
 
   function mockLog(...args) {
@@ -462,15 +462,15 @@ describe('retireUnusedSkills with consolidation', () => {
 
   beforeEach(() => {
     tempDir = createTempDir();
-    originalHome = process.env.HOME;
+    originalCwd = process.cwd();
     const skillsDir = path.join(tempDir, '.claude', 'skills');
     fs.mkdirSync(skillsDir, { recursive: true });
-    process.env.HOME = tempDir;
+    process.chdir(tempDir);
     logs = [];
   });
 
   afterEach(() => {
-    process.env.HOME = originalHome;
+    process.chdir(originalCwd);
     cleanupTempDir(tempDir);
   });
 

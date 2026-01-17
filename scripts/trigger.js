@@ -578,7 +578,7 @@ export async function runAnalysis(transcriptPath, options) {
     '-p', `Extract skills from transcript at: ${transcriptPath}`,
     '--system-prompt-file', commandFile,
     '--permission-mode', 'bypassPermissions',
-    '--allowedTools', `Read,Write(${homeDir}/.claude/skills/**),Glob,Grep`,
+    '--allowedTools', 'Read,Write(.claude/skills/**),Glob,Grep',
   ];
 
   return new Promise((resolve, reject) => {

@@ -11,19 +11,15 @@ import { findSimilarSkillsStrict } from './similarity.js';
 
 /**
  * Get the skills directory path
- * @returns {string} - Path to ~/.claude/skills/
+ * @returns {string} - Path to .claude/skills/ (local project directory)
  */
 export function getSkillsDir() {
-  const homeDir = process.env.HOME || process.env.USERPROFILE;
-  if (!homeDir) {
-    throw new Error('Neither HOME nor USERPROFILE environment variable is set');
-  }
-  return path.join(homeDir, '.claude', 'skills');
+  return path.join(process.cwd(), '.claude', 'skills');
 }
 
 /**
  * Get the retired skills directory path
- * @returns {string} - Path to ~/.claude/skills/.retired/
+ * @returns {string} - Path to .claude/skills/.retired/
  */
 export function getRetiredDir() {
   return path.join(getSkillsDir(), '.retired');
